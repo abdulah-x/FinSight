@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>FinSight — Financial Research Agent</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px; color: #1a1a1a; }
+  h1 { font-size: 1.4rem; }
+  form { display: flex; gap: 8px; margin-bottom: 24px; }
+  input { flex: 1; padding: 8px 10px; font-size: 1rem; }
+  button { padding: 8px 16px; font-size: 1rem; cursor: pointer; }
+  #status { color: #666; margin-bottom: 12px; }
+  #report { white-space: pre-wrap; background: #f7f7f7; padding: 16px; border-radius: 6px; }
+  .error { color: #b00020; }
+</style>
+</head>
+<body>
+  <h1>FinSight</h1>
+  <p>Enter a company name or ticker to get a research report (LangChain + LangGraph agent).</p>
+  <form id="form">
+    <input id="query" placeholder="e.g. Apple or AAPL" required />
+    <button type="submit">Research</button>
+  </form>
+  <div id="status"></div>
+  <div id="report"></div>
+
+  <script>
+    const BACKEND_URL = window.FINSIGHT_BACKEND_URL || "http://localhost:8000";
+
+    document.getElementById("form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const query = document.getElementById("query").value;
+      const statusEl = document.getElementById("status");
+      const reportEl = document.getElementById("report");
+      reportEl.textContent = "";
+      statusEl.textContent = "Researching...";
+
+      try {
+        const res = await fetch(`${BACKEND_URL}/research`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query }),
+        });
+        const data = await res.json();
+
+        if (data.error) {
+          statusEl.textContent = "";
+          reportEl.innerHTML = `<span class="error">${data.error}</span>`;
+          return;
+        }
+
+        statusEl.textContent = "";
+        reportEl.textContent = data.report;
+      } catch (err) {
+        statusEl.textContent = "";
+        reportEl.innerHTML = `<span class="error">Request failed: ${err.message}</span>`;
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+services:
+  finsight-backend:
+    build: ./FinSight-Backend
+    container_name: finsight-backend
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+
+  finsight-frontend:
+    build: ./FinSight-Frontend
+    container_name: finsight-frontend
+    depends_on:
+      - finsight-backend
+    ports:
+      - "8080:80"
