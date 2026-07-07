@@ -6,3 +6,4 @@ langchain-groq==0.2.1
 langchain-tavily==0.1.5
 langgraph==0.2.60
 yfinance==0.2.66
+requests==2.34.2

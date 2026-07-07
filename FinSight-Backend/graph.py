@@ -1,29 +1,73 @@
 """LangGraph state graph for the FinSight financial research agent."""
 
-from typing import TypedDict
+from typing import Literal, TypedDict
 
 from langchain_groq import ChatGroq
+from pydantic import BaseModel
 
-from tools import get_stock_data, tavily_search
+from tools import get_social_sentiment, get_stock_data, tavily_search
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 
 llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0)
 
 
+class IntentClassification(BaseModel):
+    intent: Literal["quick_news", "full_report"]
+
+
+router_llm = llm.with_structured_output(IntentClassification)
+
+
+class Turn(TypedDict):
+    query: str
+    intent: str
+    ticker: str | None
+    report: str
+
+
 class AgentState(TypedDict):
     query: str
+    intent: str
     ticker: str
     market_data: dict
     news: list
+    social_posts: list
     report: str
     error: str | None
+    history: list[Turn]
+
+
+def _history_context(state: AgentState) -> str:
+    history = state.get("history") or []
+    if not history:
+        return ""
+    last = history[-1]
+    return f"\nPrior turn: user asked '{last['query']}' about {last.get('ticker')}."
+
+
+def route_query(state: AgentState) -> AgentState:
+    """Classify the query as wanting a quick news answer or a full research report."""
+    result = router_llm.invoke(
+        "Classify the user's financial query intent as exactly one value: "
+        "'quick_news' if they want a brief news/sentiment update or short factual answer "
+        "(e.g. 'what's the latest on Ethereum', 'any news on Tesla today'), or "
+        "'full_report' if they want a structured research report, comparison, or deep dive "
+        "(e.g. 'give me a report on Apple', 'compare it to Microsoft', 'analyze NVDA').\n"
+        f"Query: '{state['query']}'{_history_context(state)}"
+    )
+    return {**state, "intent": result.intent}
 
 
 def resolve_ticker(state: AgentState) -> AgentState:
-    """Use the LLM to turn a free-text query into a stock ticker symbol."""
+    """Use the LLM to turn a free-text query into a Yahoo Finance ticker symbol."""
     response = llm.invoke(
-        f"Extract the most likely stock ticker symbol for this query: '{state['query']}'. "
-        "Reply with ONLY the ticker symbol, uppercase, nothing else."
+        f"Extract the Yahoo Finance ticker symbol for this query: '{state['query']}'. "
+        "If it refers to a cryptocurrency (e.g. Bitcoin, Ethereum), use Yahoo Finance's "
+        "crypto format with a '-USD' suffix (e.g. BTC-USD, ETH-USD) rather than a plain "
+        "symbol, since the plain symbol is often a different, unrelated instrument (like an "
+        "ETF or trust). Reply with ONLY the ticker symbol, uppercase, nothing else."
+        f"{_history_context(state)}"
     )
     ticker = response.content.strip().upper()
     return {**state, "ticker": ticker}
@@ -36,53 +80,126 @@ def fetch_market_data(state: AgentState) -> AgentState:
     return {**state, "market_data": data, "error": None}
 
 
-def fetch_news(state: AgentState) -> AgentState:
+def fetch_sources(state: AgentState) -> AgentState:
     company = state["market_data"].get("name") or state["ticker"]
-    results = tavily_search.invoke({"query": f"{company} stock news recent"})
-    return {**state, "news": results.get("results", [])}
+    limit = 3 if state["intent"] == "quick_news" else 8
+    max_results = 3 if state["intent"] == "quick_news" else 5
+
+    news_results = tavily_search.invoke({"query": f"{company} stock news recent"})
+    social_posts = get_social_sentiment.invoke({"ticker": state["ticker"], "limit": limit})
+
+    news = news_results.get("results", [])[:max_results]
+    return {**state, "news": news, "social_posts": social_posts}
+
+
+def generate_quick_answer(state: AgentState) -> AgentState:
+    news_snips = "\n".join(f"- {n.get('title')}" for n in state.get("news", []))
+    social_snips = "\n".join(
+        f"- @{p['username']} ({p.get('sentiment') or 'neutral'}): {p['body']}"
+        for p in state.get("social_posts", [])
+    )
+    prompt = (
+        f"Answer in 1-3 concise sentences, no markdown headers or bullet points. "
+        f"Query: '{state['query']}'.\n"
+        f"Recent news:\n{news_snips}\nSocial sentiment (StockTwits):\n{social_snips}"
+    )
+    response = llm.invoke(prompt)
+    turn: Turn = {
+        "query": state["query"],
+        "intent": state["intent"],
+        "ticker": state.get("ticker"),
+        "report": response.content,
+    }
+    history = (state.get("history") or [])[-4:] + [turn]
+    return {**state, "report": response.content, "history": history}
 
 
 def generate_report(state: AgentState) -> AgentState:
     news_snippets = "\n".join(
         f"- {item.get('title')}: {item.get('content', '')[:200]} (source: {item.get('url')})"
-        for item in state["news"]
+        for item in state.get("news", [])
     )
+    social_snippets = "\n".join(
+        f"- @{p['username']} ({p.get('sentiment') or 'neutral'}): {p['body']} (source: {p['url']})"
+        for p in state.get("social_posts", [])
+    )
+    prior_turn = ""
+    comparison_instruction = ""
+    history = state.get("history") or []
+    if history:
+        last = history[-1]
+        prior_turn = (
+            f"\nPrior turn in this conversation: user asked '{last['query']}' about "
+            f"{last.get('ticker')}, and the agent's answer was:\n{last['report']}\n"
+        )
+        if last.get("ticker") and last["ticker"] != state.get("ticker"):
+            comparison_instruction = (
+                f"\nThe current query is a follow-up that references the prior turn. "
+                f"Add a 'Comparison' section (after Summary) that explicitly compares "
+                f"{state.get('ticker')}'s key metrics (price, market cap, P/E) against "
+                f"{last['ticker']}'s figures from the prior turn, and states which looks "
+                f"stronger on those metrics."
+            )
+
     prompt = f"""You are a financial research assistant. Using the data below, write a
-concise structured research report in markdown with sections: Summary, Key Metrics,
-Recent News, Sources.
+concise structured research report in markdown with sections: Summary{comparison_instruction and ", Comparison" or ""}, Key Metrics,
+Recent News, Social Sentiment, Sources.
 
 Market data:
 {state['market_data']}
 
 News:
 {news_snippets}
+
+Social sentiment (StockTwits):
+{social_snippets}
+{prior_turn}{comparison_instruction}
 """
     response = llm.invoke(prompt)
-    return {**state, "report": response.content}
+    turn: Turn = {
+        "query": state["query"],
+        "intent": state["intent"],
+        "ticker": state.get("ticker"),
+        "report": response.content,
+    }
+    history = history[-4:] + [turn]
+    return {**state, "report": response.content, "history": history}
 
 
 def has_valid_ticker(state: AgentState) -> str:
     return "error" if state.get("error") else "ok"
 
 
+def route_by_intent(state: AgentState) -> str:
+    return state["intent"]
+
+
 def build_graph():
     graph = StateGraph(AgentState)
+    graph.add_node("route_query", route_query)
     graph.add_node("resolve_ticker", resolve_ticker)
     graph.add_node("fetch_market_data", fetch_market_data)
-    graph.add_node("fetch_news", fetch_news)
+    graph.add_node("fetch_sources", fetch_sources)
+    graph.add_node("generate_quick_answer", generate_quick_answer)
     graph.add_node("generate_report", generate_report)
 
-    graph.set_entry_point("resolve_ticker")
+    graph.set_entry_point("route_query")
+    graph.add_edge("route_query", "resolve_ticker")
     graph.add_edge("resolve_ticker", "fetch_market_data")
     graph.add_conditional_edges(
         "fetch_market_data",
         has_valid_ticker,
-        {"ok": "fetch_news", "error": END},
+        {"ok": "fetch_sources", "error": END},
     )
-    graph.add_edge("fetch_news", "generate_report")
+    graph.add_conditional_edges(
+        "fetch_sources",
+        route_by_intent,
+        {"quick_news": "generate_quick_answer", "full_report": "generate_report"},
+    )
+    graph.add_edge("generate_quick_answer", END)
     graph.add_edge("generate_report", END)
 
-    return graph.compile()
+    return graph.compile(checkpointer=MemorySaver())
 
 
 research_graph = build_graph()

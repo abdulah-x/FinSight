@@ -2,58 +2,395 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>FinSight — Financial Research Agent</title>
 <style>
-  body { font-family: system-ui, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px; color: #1a1a1a; }
-  h1 { font-size: 1.4rem; }
-  form { display: flex; gap: 8px; margin-bottom: 24px; }
-  input { flex: 1; padding: 8px 10px; font-size: 1rem; }
-  button { padding: 8px 16px; font-size: 1rem; cursor: pointer; }
-  #status { color: #666; margin-bottom: 12px; }
-  #report { white-space: pre-wrap; background: #f7f7f7; padding: 16px; border-radius: 6px; }
-  .error { color: #b00020; }
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-alt: #1e222b;
+    --border: #2a2f3a;
+    --text: #e8eaed;
+    --text-dim: #9aa2b1;
+    --accent: #4f8cff;
+    --accent-dim: #2f4d8f;
+    --user-bubble: #2b5cff;
+    --success: #2ecc71;
+    --error: #ff5c5c;
+    --radius: 14px;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    background: linear-gradient(180deg, var(--bg), #0a0c10 60%);
+    color: var(--text);
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    padding: 32px 16px;
+  }
+
+  .app {
+    width: 100%;
+    max-width: 760px;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 6px;
+  }
+
+  .logo {
+    width: 38px;
+    height: 38px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, var(--accent), #7b5cff);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 1.1rem;
+    flex-shrink: 0;
+  }
+
+  h1 {
+    font-size: 1.4rem;
+    margin: 0;
+    letter-spacing: -0.02em;
+  }
+
+  .tagline {
+    color: var(--text-dim);
+    font-size: 0.92rem;
+    margin: 4px 0 24px 50px;
+  }
+
+  form {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+    position: sticky;
+    top: 0;
+  }
+
+  input {
+    flex: 1;
+    padding: 13px 16px;
+    font-size: 1rem;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  input:focus { border-color: var(--accent); }
+  input::placeholder { color: var(--text-dim); }
+
+  button {
+    padding: 0 22px;
+    font-size: 0.98rem;
+    font-weight: 600;
+    cursor: pointer;
+    border-radius: 10px;
+    border: none;
+    background: var(--accent);
+    color: white;
+    transition: background 0.15s, transform 0.05s;
+  }
+  button:hover { background: #6b9dff; }
+  button:active { transform: scale(0.97); }
+  button:disabled { background: var(--accent-dim); cursor: not-allowed; }
+
+  .chat {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .bubble {
+    border-radius: var(--radius);
+    padding: 14px 18px;
+    max-width: 100%;
+    line-height: 1.55;
+    animation: fadeIn 0.25s ease;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .bubble.user {
+    align-self: flex-end;
+    background: var(--user-bubble);
+    color: white;
+    border-bottom-right-radius: 4px;
+    font-weight: 500;
+  }
+
+  .bubble.agent {
+    align-self: stretch;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-bottom-left-radius: 4px;
+  }
+
+  .bubble.agent .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 10px;
+  }
+
+  .bubble.agent .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--success);
+  }
+
+  .report h3 {
+    font-size: 0.95rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--accent);
+    margin: 18px 0 8px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 6px;
+  }
+  .report h3:first-child { margin-top: 0; }
+
+  .report ul {
+    margin: 0 0 4px;
+    padding-left: 20px;
+  }
+  .report li { margin-bottom: 6px; color: var(--text); }
+  .report p { margin: 0 0 8px; }
+  .report strong { color: #fff; }
+  .report a { color: var(--accent); text-decoration: none; }
+  .report a:hover { text-decoration: underline; }
+
+  .metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 10px;
+    margin: 4px 0 4px;
+  }
+  .metric {
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+  }
+  .metric .label {
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    margin-bottom: 4px;
+  }
+  .metric .value {
+    font-size: 1rem;
+    font-weight: 700;
+  }
+
+  .status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-dim);
+    font-size: 0.9rem;
+    padding: 10px 4px;
+  }
+
+  .spinner {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .error-bubble {
+    color: var(--error);
+    font-weight: 500;
+  }
+
+  .empty-state {
+    color: var(--text-dim);
+    text-align: center;
+    padding: 60px 20px;
+    font-size: 0.95rem;
+  }
 </style>
 </head>
 <body>
-  <h1>FinSight</h1>
-  <p>Enter a company name or ticker to get a research report (LangChain + LangGraph agent).</p>
-  <form id="form">
-    <input id="query" placeholder="e.g. Apple or AAPL" required />
-    <button type="submit">Research</button>
-  </form>
-  <div id="status"></div>
-  <div id="report"></div>
+  <div class="app">
+    <header>
+      <div class="logo">F</div>
+      <h1>FinSight</h1>
+    </header>
+    <p class="tagline">LangChain + LangGraph financial research agent</p>
+
+    <form id="form">
+      <input id="query" placeholder="Ask about a company or ticker, e.g. Apple or AAPL" autocomplete="off" required />
+      <button type="submit" id="submitBtn">Research</button>
+    </form>
+
+    <div class="chat" id="chat">
+      <div class="empty-state" id="emptyState">Enter a company name or ticker above to generate a research report.</div>
+    </div>
+  </div>
 
   <script>
     const BACKEND_URL = window.FINSIGHT_BACKEND_URL || "http://localhost:8000";
+    const SESSION_ID = crypto.randomUUID();
+    const chat = document.getElementById("chat");
+    const emptyState = document.getElementById("emptyState");
+    const submitBtn = document.getElementById("submitBtn");
+
+    function escapeHtml(str) {
+      return str.replace(/[&<>"']/g, (c) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+      }[c]));
+    }
+
+    function inlineFormat(text) {
+      let out = escapeHtml(text);
+      out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+      out = out.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+      return out;
+    }
+
+    function renderMarkdown(md) {
+      const lines = md.split("\n");
+      let html = "";
+      let inList = false;
+
+      for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line) continue;
+
+        if (line.startsWith("### ")) {
+          if (inList) { html += "</ul>"; inList = false; }
+          html += `<h3>${inlineFormat(line.slice(4))}</h3>`;
+        } else if (line.startsWith("* ") || line.startsWith("- ")) {
+          if (!inList) { html += "<ul>"; inList = true; }
+          html += `<li>${inlineFormat(line.slice(2))}</li>`;
+        } else {
+          if (inList) { html += "</ul>"; inList = false; }
+          html += `<p>${inlineFormat(line)}</p>`;
+        }
+      }
+      if (inList) html += "</ul>";
+      return html;
+    }
+
+    function metricsGrid(marketData) {
+      if (!marketData) return "";
+      const entries = [
+        ["Price", marketData.price != null ? `${marketData.currency || ""} ${marketData.price}` : null],
+        ["Market Cap", marketData.market_cap != null ? formatLargeNumber(marketData.market_cap) : null],
+        ["P/E Ratio", marketData.pe_ratio != null ? Number(marketData.pe_ratio).toFixed(2) : null],
+        ["52W High", marketData["52_week_high"]],
+        ["52W Low", marketData["52_week_low"]],
+        ["Sector", marketData.sector],
+      ].filter(([, v]) => v !== null && v !== undefined);
+
+      if (!entries.length) return "";
+      const cards = entries.map(([label, value]) =>
+        `<div class="metric"><div class="label">${label}</div><div class="value">${value}</div></div>`
+      ).join("");
+      return `<div class="metrics-grid">${cards}</div>`;
+    }
+
+    function formatLargeNumber(n) {
+      if (n >= 1e12) return (n / 1e12).toFixed(2) + "T";
+      if (n >= 1e9) return (n / 1e9).toFixed(2) + "B";
+      if (n >= 1e6) return (n / 1e6).toFixed(2) + "M";
+      return n.toLocaleString();
+    }
+
+    function addUserBubble(text) {
+      const el = document.createElement("div");
+      el.className = "bubble user";
+      el.textContent = text;
+      chat.appendChild(el);
+    }
+
+    function addStatusBubble() {
+      const el = document.createElement("div");
+      el.className = "status";
+      el.innerHTML = `<div class="spinner"></div> Researching...`;
+      chat.appendChild(el);
+      return el;
+    }
+
+    function addAgentBubble(reportMd, marketData, intent) {
+      const label = intent === "quick_news" ? "Quick Answer" : "Full Report";
+      const el = document.createElement("div");
+      el.className = "bubble agent";
+      el.innerHTML = `
+        <div class="badge"><span class="dot"></span>${label}</div>
+        ${metricsGrid(marketData)}
+        <div class="report">${renderMarkdown(reportMd)}</div>
+      `;
+      chat.appendChild(el);
+    }
+
+    function addErrorBubble(message) {
+      const el = document.createElement("div");
+      el.className = "bubble agent error-bubble";
+      el.innerHTML = `<div class="badge"><span class="dot" style="background:var(--error)"></span>FinSight Agent</div>${escapeHtml(message)}`;
+      chat.appendChild(el);
+    }
 
     document.getElementById("form").addEventListener("submit", async (e) => {
       e.preventDefault();
-      const query = document.getElementById("query").value;
-      const statusEl = document.getElementById("status");
-      const reportEl = document.getElementById("report");
-      reportEl.textContent = "";
-      statusEl.textContent = "Researching...";
+      const input = document.getElementById("query");
+      const query = input.value.trim();
+      if (!query) return;
+
+      if (emptyState) emptyState.remove();
+      addUserBubble(query);
+      input.value = "";
+      submitBtn.disabled = true;
+      const statusEl = addStatusBubble();
+      chat.scrollTop = chat.scrollHeight;
 
       try {
         const res = await fetch(`${BACKEND_URL}/research`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ query }),
+          body: JSON.stringify({ query, session_id: SESSION_ID }),
         });
         const data = await res.json();
+        statusEl.remove();
 
         if (data.error) {
-          statusEl.textContent = "";
-          reportEl.innerHTML = `<span class="error">${data.error}</span>`;
-          return;
+          addErrorBubble(data.error);
+        } else {
+          addAgentBubble(data.report, data.market_data, data.intent);
         }
-
-        statusEl.textContent = "";
-        reportEl.textContent = data.report;
       } catch (err) {
-        statusEl.textContent = "";
-        reportEl.innerHTML = `<span class="error">Request failed: ${err.message}</span>`;
+        statusEl.remove();
+        addErrorBubble(`Request failed: ${err.message}`);
+      } finally {
+        submitBtn.disabled = false;
+        chat.scrollTop = chat.scrollHeight;
       }
     });
   </script>

@@ -7,33 +7,47 @@ beyond a manual smoke test. It exists to prove the tools can be used correctly, 
 polished product.
 
 ## Problem statement
-Given a company name or stock ticker, produce a structured financial research report:
-1. Resolve the free-text query to a ticker symbol (via the LLM).
-2. Pull real market data (price, market cap, P/E, 52-week range, sector) via `yfinance`.
-3. Search recent news about the company via the Tavily search API.
-4. Synthesize both into a markdown report (Summary, Key Metrics, Recent News, Sources).
+Given a free-text financial query (a company name, ticker, or crypto asset), the agent:
+1. Classifies intent — a quick news/sentiment question vs. a full research report request.
+2. Resolves the query to a Yahoo Finance ticker symbol (via the LLM).
+3. Pulls real market data (price, market cap, P/E, 52-week range, sector) via `yfinance`.
+4. Gathers real-time context from two sources: news via the Tavily search API, and real
+   user sentiment/discussion via the StockTwits public API.
+5. Synthesizes a response shaped to the classified intent: a 1-3 sentence quick answer, or
+   a full markdown report (Summary, Key Metrics, Recent News, Social Sentiment, Sources).
+6. Remembers prior turns within a session (via LangGraph's `MemorySaver` checkpointer), so
+   follow-up queries like "now compare it to Microsoft" have context from the previous turn.
 
-This is a good LangChain/LangGraph demo because it requires real multi-step orchestration
-(tool calls + conditional branching + LLM synthesis) rather than a single prompt-response.
+This is a good LangChain/LangGraph demo because it requires real multi-step orchestration:
+tool calls, two layers of conditional branching (ticker validity, then intent), structured
+LLM output for classification, and session-scoped memory — not just a single prompt-response
+or a linear chain.
 
 ## Architecture
 ```
-resolve_ticker --> fetch_market_data --> [conditional] --> fetch_news --> generate_report --> END
-                                              |
-                                       (invalid ticker)
-                                              |
-                                             END
+route_query (classifies intent: quick_news | full_report)
+   --> resolve_ticker --> fetch_market_data --> [conditional: invalid ticker -> END]
+   --> fetch_sources (Tavily news + StockTwits sentiment, depth scaled by intent)
+   --> [conditional on intent]
+         quick_news  --> generate_quick_answer --> END
+         full_report --> generate_report --> END
 ```
-- **LangGraph** (`FinSight-Backend/graph.py`): defines `AgentState` and wires the above as an
-  explicit `StateGraph` with a conditional edge on ticker validity — this is the core LangGraph
-  usage being demonstrated (not just a ReAct loop).
-- **LangChain** (`FinSight-Backend/tools.py`): wraps `yfinance` as a `@tool` and uses
-  `langchain-tavily`'s `TavilySearch` tool; `ChatGroq` is used for ticker resolution and
-  report synthesis.
-- **FastAPI** (`FinSight-Backend/main.py`): exposes `POST /research` which invokes the compiled
-  graph and returns the report.
-- **Frontend** (`FinSight-Frontend/index.html`): a minimal static HTML/JS page (served via
-  nginx) with a single input box that calls the backend and renders the report.
+- **LangGraph** (`FinSight-Backend/graph.py`): defines `AgentState` (including `intent`,
+  `social_posts`, and a capped `history` of prior turns) and wires the above as an explicit
+  `StateGraph` with two conditional edges — one on ticker validity, one on classified intent.
+  The graph is compiled with a `MemorySaver` checkpointer keyed by a per-session `thread_id`,
+  so state (including `history`) persists across turns within a session.
+- **LangChain** (`FinSight-Backend/tools.py`): wraps `yfinance` and the StockTwits public API
+  as `@tool`s, and uses `langchain-tavily`'s `TavilySearch` tool. `ChatGroq` powers ticker
+  resolution and report synthesis; `route_query` uses `llm.with_structured_output` with a
+  Pydantic `Literal` model for reliable intent classification instead of parsing free-text
+  output.
+- **FastAPI** (`FinSight-Backend/main.py`): exposes `POST /research`, accepting a
+  client-generated `session_id` (falls back to a generated UUID) that's passed as the
+  LangGraph `thread_id` so conversational memory works across requests.
+- **Frontend** (`FinSight-Frontend/index.html`): a static HTML/JS chat UI (served via nginx)
+  that generates a session id per page load, sends it with every request, and renders each
+  turn as a chat bubble labeled "Quick Answer" or "Full Report" based on the classified intent.
 
 ## Why these tools
 - **LangChain**: standard way to wrap external tools (search, market data) into a form an LLM
@@ -46,6 +60,10 @@ resolve_ticker --> fetch_market_data --> [conditional] --> fetch_news --> genera
   integration.
 - **yfinance**: free, no API key, gives real structured market data — a second tool alongside
   search, which shows multi-tool orchestration in the graph.
+- **StockTwits public API**: free, no auth needed for basic reads, gives real user
+  sentiment/discussion for stocks and crypto — a zero-cost substitute for X/Twitter, whose
+  API now requires a paid tier for read access. (Reddit's public JSON endpoint was tried
+  first but is now blocked by Cloudflare bot detection without OAuth.)
 
 ## Running it
 Two containers, wired with docker-compose:

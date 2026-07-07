@@ -2,6 +2,7 @@
 
 import os
 
+import requests
 import yfinance as yf
 from langchain_core.tools import tool
 from langchain_tavily import TavilySearch
@@ -10,6 +11,44 @@ tavily_search = TavilySearch(
     max_results=5,
     tavily_api_key=os.environ.get("TAVILY_API_KEY"),
 )
+
+def _to_stocktwits_symbol(ticker: str) -> str:
+    """Convert a Yahoo Finance ticker (e.g. ETH-USD) to StockTwits format (e.g. ETH.X)."""
+    if ticker.endswith("-USD"):
+        return f"{ticker[:-4]}.X"
+    return ticker
+
+
+@tool
+def get_social_sentiment(ticker: str, limit: int = 5) -> list[dict]:
+    """Fetch recent StockTwits messages (real user sentiment/discussion) for a ticker.
+
+    Returns a list of {body, username, sentiment, created_at, url}.
+    """
+    symbol = _to_stocktwits_symbol(ticker)
+    url = f"https://api.stocktwits.com/api/2/streams/symbol/{symbol}.json"
+    headers = {"User-Agent": "Mozilla/5.0 FinSight/1.0 (financial research demo agent)"}
+
+    try:
+        response = requests.get(url, headers=headers, timeout=6)
+        response.raise_for_status()
+        messages = response.json().get("messages", [])
+    except Exception:
+        return []
+
+    results = []
+    for m in messages[:limit]:
+        sentiment_data = m.get("entities", {}).get("sentiment")
+        results.append(
+            {
+                "body": m.get("body"),
+                "username": m.get("user", {}).get("username"),
+                "sentiment": sentiment_data.get("basic") if sentiment_data else None,
+                "created_at": m.get("created_at"),
+                "url": f"https://stocktwits.com/symbol/{symbol}",
+            }
+        )
+    return results
 
 
 @tool
