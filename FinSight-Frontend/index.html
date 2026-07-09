@@ -18,6 +18,7 @@
     --success: #2ecc71;
     --error: #ff5c5c;
     --radius: 14px;
+    --sidebar-w: 260px;
   }
 
   * { box-sizing: border-box; }
@@ -29,8 +30,128 @@
     margin: 0;
     min-height: 100vh;
     display: flex;
+  }
+
+  .layout {
+    display: flex;
+    width: 100%;
+    min-height: 100vh;
+  }
+
+  /* ---------- Sidebar ---------- */
+  .sidebar {
+    width: var(--sidebar-w);
+    flex-shrink: 0;
+    background: #0c0e12;
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    padding: 16px 12px;
+    transition: transform 0.2s ease;
+  }
+
+  .sidebar-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 4px 16px;
+  }
+
+  .logo {
+    width: 32px;
+    height: 32px;
+    border-radius: 9px;
+    background: linear-gradient(135deg, var(--accent), #7b5cff);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 0.95rem;
+    flex-shrink: 0;
+  }
+
+  .sidebar-header h1 {
+    font-size: 1.05rem;
+    margin: 0;
+    letter-spacing: -0.02em;
+  }
+
+  .new-chat-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 9px 12px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    border-radius: 9px;
+    width: 100%;
+    margin-bottom: 12px;
+  }
+  .new-chat-btn:hover { background: var(--panel); border-color: var(--accent-dim); }
+
+  .conversation-list {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .conversation-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 9px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    border: 1px solid transparent;
+  }
+  .conversation-item:hover { background: var(--panel); }
+  .conversation-item.active {
+    background: var(--panel-alt);
+    border-color: var(--accent-dim);
+  }
+  .conversation-item .conv-title {
+    font-size: 0.85rem;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--text);
+  }
+  .conversation-item .conv-time {
+    font-size: 0.72rem;
+    color: var(--text-dim);
+  }
+
+  .sidebar-empty {
+    color: var(--text-dim);
+    font-size: 0.82rem;
+    padding: 10px;
+    text-align: center;
+  }
+
+  .sidebar-toggle {
+    display: none;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 0.9rem;
+  }
+
+  /* ---------- Main column ---------- */
+  .main {
+    flex: 1;
+    display: flex;
     justify-content: center;
     padding: 32px 16px;
+    min-width: 0;
   }
 
   .app {
@@ -38,54 +159,17 @@
     max-width: 760px;
   }
 
-  header {
-    display: flex;
+  .mobile-header {
+    display: none;
     align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    margin-bottom: 6px;
+    gap: 10px;
+    margin-bottom: 16px;
   }
-
-  .header-left {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-
-  .logo {
-    width: 38px;
-    height: 38px;
-    border-radius: 10px;
-    background: linear-gradient(135deg, var(--accent), #7b5cff);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: 700;
-    font-size: 1.1rem;
-    flex-shrink: 0;
-  }
-
-  h1 {
-    font-size: 1.4rem;
-    margin: 0;
-    letter-spacing: -0.02em;
-  }
-
-  .new-chat-btn {
-    background: transparent;
-    border: 1px solid var(--border);
-    color: var(--text-dim);
-    padding: 7px 14px;
-    font-size: 0.82rem;
-    font-weight: 600;
-    border-radius: 8px;
-  }
-  .new-chat-btn:hover { background: var(--panel); color: var(--text); }
 
   .tagline {
     color: var(--text-dim);
     font-size: 0.92rem;
-    margin: 4px 0 24px 50px;
+    margin: 0 0 24px;
   }
 
   form {
@@ -283,9 +367,23 @@
   .sentiment-chip.bearish { color: var(--error); border-color: rgba(255, 92, 92, 0.3); }
   .sentiment-chip.neutral { color: var(--text-dim); }
 
+  @media (max-width: 800px) {
+    .sidebar {
+      position: fixed;
+      z-index: 20;
+      top: 0;
+      left: 0;
+      height: 100vh;
+      transform: translateX(-100%);
+      box-shadow: 2px 0 24px rgba(0,0,0,0.4);
+    }
+    .sidebar.open { transform: translateX(0); }
+    .sidebar-toggle { display: inline-flex; }
+    .mobile-header { display: flex; }
+    .main { padding: 20px 14px; }
+  }
+
   @media (max-width: 480px) {
-    body { padding: 16px 10px; }
-    .tagline { margin-left: 0; }
     form { flex-direction: column; }
     button { padding: 12px; width: 100%; }
     .bubble { padding: 12px 14px; }
@@ -294,33 +392,147 @@
 </style>
 </head>
 <body>
-  <div class="app">
-    <header>
-      <div class="header-left">
+  <div class="layout">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
         <div class="logo">F</div>
         <h1>FinSight</h1>
       </div>
-      <button type="button" class="new-chat-btn" id="newChatBtn">New Chat</button>
-    </header>
-    <p class="tagline">LangChain + LangGraph financial research agent</p>
+      <button type="button" class="new-chat-btn" id="newChatBtn">+ New Chat</button>
+      <div class="conversation-list" id="conversationList"></div>
+    </aside>
 
-    <form id="form">
-      <input id="query" placeholder="Ask about a company or ticker, e.g. Apple or AAPL" autocomplete="off" required />
-      <button type="submit" id="submitBtn">Research</button>
-    </form>
+    <div class="main">
+      <div class="app">
+        <div class="mobile-header">
+          <button type="button" class="sidebar-toggle" id="sidebarToggle">☰</button>
+          <h1 style="font-size:1.1rem;margin:0;">FinSight</h1>
+        </div>
+        <p class="tagline">LangChain + LangGraph financial research agent</p>
 
-    <div class="chat" id="chat">
-      <div class="empty-state" id="emptyState">Enter a company name or ticker above to generate a research report.</div>
+        <form id="form">
+          <input id="query" placeholder="Ask about a company or ticker, e.g. Apple or AAPL" autocomplete="off" required />
+          <button type="submit" id="submitBtn">Research</button>
+        </form>
+
+        <div class="chat" id="chat">
+          <div class="empty-state" id="emptyState">Enter a company name or ticker above to generate a research report.</div>
+        </div>
+      </div>
     </div>
   </div>
 
   <script>
     const BACKEND_URL = window.FINSIGHT_BACKEND_URL || "http://localhost:8000";
-    let SESSION_ID = crypto.randomUUID();
-    const chat = document.getElementById("chat");
-    const submitBtn = document.getElementById("submitBtn");
+    const STORAGE_KEY = "finsight_conversations";
     const EMPTY_STATE_HTML = '<div class="empty-state" id="emptyState">Enter a company name or ticker above to generate a research report.</div>';
 
+    const chat = document.getElementById("chat");
+    const submitBtn = document.getElementById("submitBtn");
+    const conversationList = document.getElementById("conversationList");
+    const sidebar = document.getElementById("sidebar");
+
+    // ---------- Conversation storage ----------
+    function loadConversations() {
+      try {
+        return JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
+      } catch {
+        return [];
+      }
+    }
+
+    function saveConversations(conversations) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations));
+    }
+
+    function makeConversation() {
+      return { id: crypto.randomUUID(), title: null, createdAt: Date.now(), turns: [] };
+    }
+
+    let conversations = loadConversations();
+    let activeId;
+
+    function getActive() {
+      return conversations.find((c) => c.id === activeId);
+    }
+
+    function persistActiveTurn(turn) {
+      const conv = getActive();
+      if (!conv) return;
+      conv.turns.push(turn);
+      if (!conv.title && turn.type === "user") {
+        conv.title = turn.text.slice(0, 42) + (turn.text.length > 42 ? "…" : "");
+      }
+      saveConversations(conversations);
+      renderSidebar();
+    }
+
+    function relativeTime(ts) {
+      const diffMin = Math.round((Date.now() - ts) / 60000);
+      if (diffMin < 1) return "just now";
+      if (diffMin < 60) return `${diffMin}m ago`;
+      const diffH = Math.round(diffMin / 60);
+      if (diffH < 24) return `${diffH}h ago`;
+      return new Date(ts).toLocaleDateString();
+    }
+
+    function renderSidebar() {
+      if (!conversations.length) {
+        conversationList.innerHTML = '<div class="sidebar-empty">No conversations yet</div>';
+        return;
+      }
+      const sorted = [...conversations].sort((a, b) => b.createdAt - a.createdAt);
+      conversationList.innerHTML = sorted
+        .map((c) => {
+          const title = c.title || "New conversation";
+          const activeClass = c.id === activeId ? " active" : "";
+          return `<div class="conversation-item${activeClass}" data-id="${c.id}">
+            <div class="conv-title">${escapeHtml(title)}</div>
+            <div class="conv-time">${relativeTime(c.createdAt)}</div>
+          </div>`;
+        })
+        .join("");
+
+      conversationList.querySelectorAll(".conversation-item").forEach((el) => {
+        el.addEventListener("click", () => {
+          switchConversation(el.dataset.id);
+          closeSidebarOnMobile();
+        });
+      });
+    }
+
+    function switchConversation(id) {
+      const conv = conversations.find((c) => c.id === id);
+      if (!conv) return;
+      activeId = id;
+      chat.innerHTML = "";
+      if (!conv.turns.length) {
+        chat.innerHTML = EMPTY_STATE_HTML;
+      } else {
+        for (const turn of conv.turns) {
+          if (turn.type === "user") addUserBubble(turn.text);
+          else if (turn.type === "error") addErrorBubble(turn.text);
+          else addAgentBubble(turn.reportMd, turn.marketData, turn.intent, turn.socialPosts);
+        }
+      }
+      renderSidebar();
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    function startNewConversation() {
+      const conv = makeConversation();
+      conversations.push(conv);
+      saveConversations(conversations);
+      activeId = conv.id;
+      chat.innerHTML = EMPTY_STATE_HTML;
+      renderSidebar();
+    }
+
+    function closeSidebarOnMobile() {
+      sidebar.classList.remove("open");
+    }
+
+    // ---------- Rendering helpers ----------
     function escapeHtml(str) {
       return str.replace(/[&<>"']/g, (c) => ({
         "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
@@ -434,6 +646,7 @@
       chat.appendChild(el);
     }
 
+    // ---------- Form submit ----------
     document.getElementById("form").addEventListener("submit", async (e) => {
       e.preventDefault();
       const input = document.getElementById("query");
@@ -443,6 +656,7 @@
       const emptyState = document.getElementById("emptyState");
       if (emptyState) emptyState.remove();
       addUserBubble(query);
+      persistActiveTurn({ type: "user", text: query });
       input.value = "";
       submitBtn.disabled = true;
       const statusEl = addStatusBubble();
@@ -452,19 +666,29 @@
         const res = await fetch(`${BACKEND_URL}/research`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ query, session_id: SESSION_ID }),
+          body: JSON.stringify({ query, session_id: activeId }),
         });
         const data = await res.json();
         statusEl.remove();
 
         if (data.error) {
           addErrorBubble(data.error);
+          persistActiveTurn({ type: "error", text: data.error });
         } else {
           addAgentBubble(data.report, data.market_data, data.intent, data.social_posts);
+          persistActiveTurn({
+            type: "agent",
+            reportMd: data.report,
+            marketData: data.market_data,
+            intent: data.intent,
+            socialPosts: data.social_posts,
+          });
         }
       } catch (err) {
         statusEl.remove();
-        addErrorBubble(`Request failed: ${err.message}`);
+        const msg = `Request failed: ${err.message}`;
+        addErrorBubble(msg);
+        persistActiveTurn({ type: "error", text: msg });
       } finally {
         submitBtn.disabled = false;
         chat.scrollTop = chat.scrollHeight;
@@ -472,10 +696,22 @@
     });
 
     document.getElementById("newChatBtn").addEventListener("click", () => {
-      SESSION_ID = crypto.randomUUID();
-      chat.innerHTML = EMPTY_STATE_HTML;
+      startNewConversation();
+      closeSidebarOnMobile();
       document.getElementById("query").focus();
     });
+
+    document.getElementById("sidebarToggle").addEventListener("click", () => {
+      sidebar.classList.toggle("open");
+    });
+
+    // ---------- Init ----------
+    if (conversations.length) {
+      activeId = [...conversations].sort((a, b) => b.createdAt - a.createdAt)[0].id;
+      switchConversation(activeId);
+    } else {
+      startNewConversation();
+    }
   </script>
 </body>
 </html>
