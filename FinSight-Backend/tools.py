@@ -1,5 +1,3 @@
-"""LangChain tool wrappers used by the FinSight research graph."""
-
 import os
 
 import requests

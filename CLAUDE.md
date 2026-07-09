@@ -8,7 +8,8 @@ polished product.
 
 ## Problem statement
 Given a free-text financial query (a company name, ticker, or crypto asset), the agent:
-1. Classifies intent — a quick news/sentiment question vs. a full research report request.
+1. Classifies intent — a quick news/sentiment question, a full research report request, or
+   **out of scope** (not about a stock/crypto asset at all).
 2. Resolves the query to a Yahoo Finance ticker symbol (via the LLM).
 3. Pulls real market data (price, market cap, P/E, 52-week range, sector) via `yfinance`.
 4. Gathers real-time context from two sources: news via the Tavily search API, and real
@@ -18,14 +19,26 @@ Given a free-text financial query (a company name, ticker, or crypto asset), the
 6. Remembers prior turns within a session (via LangGraph's `MemorySaver` checkpointer), so
    follow-up queries like "now compare it to Microsoft" have context from the previous turn.
 
+Two guardrails are built into the prompts/graph, not bolted on as post-hoc filters:
+- **Scope guard**: `route_query` classifies non-financial queries (chit-chat, unrelated
+  requests, instruction-override attempts) as `out_of_scope` and routes directly to a
+  canned rejection message — it never reaches ticker resolution or tool calls.
+- **Anti-prompt-injection guard**: the report/answer-generation prompts explicitly treat
+  the user's query as a request, never as ground truth. If a query asserts a price/trend
+  claim (e.g. "Bitcoin is crashing to zero") that the fetched market data contradicts, the
+  response opens by flagging the claim as unverified against the actual data rather than
+  repeating it — the LLM is only allowed to trust `market_data`/`news`/`social_posts`
+  fetched by tools, never assertions embedded in the query itself.
+
 This is a good LangChain/LangGraph demo because it requires real multi-step orchestration:
-tool calls, two layers of conditional branching (ticker validity, then intent), structured
-LLM output for classification, and session-scoped memory — not just a single prompt-response
-or a linear chain.
+tool calls, three-way conditional branching (scope, then ticker validity, then intent),
+structured LLM output for classification, session-scoped memory, and defensive prompting
+against untrusted user input — not just a single prompt-response or a linear chain.
 
 ## Architecture
 ```
-route_query (classifies intent: quick_news | full_report)
+route_query (classifies intent: quick_news | full_report | out_of_scope)
+   --> [conditional: out_of_scope -> out_of_scope_response -> END]
    --> resolve_ticker --> fetch_market_data --> [conditional: invalid ticker -> END]
    --> fetch_sources (Tavily news + StockTwits sentiment, depth scaled by intent)
    --> [conditional on intent]
@@ -34,7 +47,7 @@ route_query (classifies intent: quick_news | full_report)
 ```
 - **LangGraph** (`FinSight-Backend/graph.py`): defines `AgentState` (including `intent`,
   `social_posts`, and a capped `history` of prior turns) and wires the above as an explicit
-  `StateGraph` with two conditional edges — one on ticker validity, one on classified intent.
+  `StateGraph` with three conditional edges — scope, ticker validity, and classified intent.
   The graph is compiled with a `MemorySaver` checkpointer keyed by a per-session `thread_id`,
   so state (including `history`) persists across turns within a session.
 - **LangChain** (`FinSight-Backend/tools.py`): wraps `yfinance` and the StockTwits public API
