@@ -20,12 +20,36 @@ the full technical breakdown.
 - **Follow-up questions** — it remembers the conversation
 - **Politely declines** anything that isn't about a stock or crypto asset
 
+## Tech stack
+
+| Layer | Tech |
+|---|---|
+| Agent orchestration | [LangGraph](https://github.com/langchain-ai/langgraph) — explicit `StateGraph` with conditional routing + `MemorySaver` session memory |
+| LLM tooling | [LangChain](https://github.com/langchain-ai/langchain) — tool wrapping, structured output |
+| LLM | [Groq](https://groq.com/) (`llama-3.3-70b-versatile`) |
+| Market data | [`yfinance`](https://github.com/ranaroussi/yfinance) |
+| News search | [Tavily](https://tavily.com/) (`langchain-tavily`) |
+| Social sentiment | StockTwits public API |
+| Backend API | [FastAPI](https://fastapi.tiangolo.com/) |
+| Frontend | Static HTML/JS chat UI served via nginx |
+| Deployment | Docker Compose (backend + frontend containers) |
+
+See [CLAUDE.md](./CLAUDE.md) for the full architecture and design rationale.
+
 ## Try it
 
+Requires a free [Groq API key](https://console.groq.com/) and [Tavily API key](https://tavily.com/).
+
 ```bash
+git clone https://github.com/abdulah-x/FinSight.git
+cd FinSight
 cp .env.example .env
-# add your GROQ_API_KEY and TAVILY_API_KEY to .env (both are free)
+# add your GROQ_API_KEY and TAVILY_API_KEY to .env
 docker compose up --build
 ```
 
-Then open http://localhost:8080 and ask about any company or crypto asset.
+This starts two containers:
+- **backend** (FastAPI + LangChain/LangGraph agent) — `http://localhost:8000`
+- **frontend** (chat UI via nginx) — `http://localhost:8080`
+
+Open `http://localhost:8080` and ask about any company or crypto asset (e.g. "Apple", "AAPL", "Bitcoin").
