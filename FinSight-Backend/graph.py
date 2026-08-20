@@ -7,7 +7,7 @@ from tools import get_social_sentiment, get_stock_data, tavily_search
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 
-llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0)
+llm = ChatGroq(model="openai/gpt-oss-120b", temperature=0)
 
 
 class IntentClassification(BaseModel):

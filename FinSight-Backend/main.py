@@ -4,11 +4,14 @@ import uuid
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from langfuse.langchain import CallbackHandler
 from pydantic import BaseModel
 
 from graph import research_graph
 
 app = FastAPI(title="FinSight API")
+
+langfuse_handler = CallbackHandler()
 
 app.add_middleware(
     CORSMiddleware,
@@ -26,7 +29,10 @@ class ResearchRequest(BaseModel):
 @app.post("/research")
 def research(request: ResearchRequest):
     session_id = request.session_id or str(uuid.uuid4())
-    config = {"configurable": {"thread_id": session_id}}
+    config = {
+        "configurable": {"thread_id": session_id},
+        "callbacks": [langfuse_handler],
+    }
     result = research_graph.invoke({"query": request.query}, config=config)
 
     if result.get("error"):

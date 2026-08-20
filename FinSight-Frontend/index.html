@@ -28,14 +28,15 @@
     background: linear-gradient(180deg, var(--bg), #0a0c10 60%);
     color: var(--text);
     margin: 0;
-    min-height: 100vh;
+    height: 100vh;
+    overflow: hidden;
     display: flex;
   }
 
   .layout {
     display: flex;
     width: 100%;
-    min-height: 100vh;
+    height: 100vh;
   }
 
   /* ---------- Sidebar ---------- */
@@ -150,13 +151,24 @@
     flex: 1;
     display: flex;
     justify-content: center;
-    padding: 32px 16px;
+    padding: 0 24px;
     min-width: 0;
+    height: 100vh;
+    overflow-y: auto;
   }
 
   .app {
     width: 100%;
-    max-width: 760px;
+    max-width: 1280px;
+    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+    padding: 32px 0 20px;
+    transition: justify-content 0.2s ease;
+  }
+
+  .app.empty {
+    justify-content: center;
   }
 
   .mobile-header {
@@ -166,18 +178,15 @@
     margin-bottom: 16px;
   }
 
-  .tagline {
-    color: var(--text-dim);
-    font-size: 0.92rem;
-    margin: 0 0 24px;
-  }
-
   form {
     display: flex;
     gap: 10px;
-    margin-bottom: 20px;
+    margin-top: 16px;
+    padding-top: 12px;
+    flex-shrink: 0;
     position: sticky;
-    top: 0;
+    bottom: 0;
+    background: var(--bg);
   }
 
   input {
@@ -230,6 +239,7 @@
 
   .bubble.user {
     align-self: flex-end;
+    max-width: 70%;
     background: var(--user-bubble);
     color: white;
     border-bottom-right-radius: 4px;
@@ -280,8 +290,38 @@
   .report li { margin-bottom: 6px; color: var(--text); }
   .report p { margin: 0 0 8px; }
   .report strong { color: #fff; }
+  .report em { color: var(--text-dim); }
   .report a { color: var(--accent); text-decoration: none; }
   .report a:hover { text-decoration: underline; }
+  .report hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 18px 0;
+  }
+
+  .table-wrap {
+    overflow-x: auto;
+    margin: 4px 0 14px;
+  }
+  .report table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+  }
+  .report th, .report td {
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+    white-space: nowrap;
+  }
+  .report th {
+    color: var(--text-dim);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    font-weight: 700;
+  }
+  .report tbody tr:hover { background: var(--panel-alt); }
 
   .metrics-grid {
     display: grid;
@@ -402,22 +442,20 @@
       <div class="conversation-list" id="conversationList"></div>
     </aside>
 
-    <div class="main">
-      <div class="app">
+    <div class="main" id="mainCol">
+      <div class="app empty" id="app">
         <div class="mobile-header">
           <button type="button" class="sidebar-toggle" id="sidebarToggle">☰</button>
           <h1 style="font-size:1.1rem;margin:0;">FinSight</h1>
         </div>
-        <p class="tagline">LangChain + LangGraph financial research agent</p>
+        <div class="chat" id="chat">
+          <div class="empty-state" id="emptyState">Ask about a company or crypto asset to generate a research report.</div>
+        </div>
 
         <form id="form">
           <input id="query" placeholder="Ask about a company or ticker, e.g. Apple or AAPL" autocomplete="off" required />
           <button type="submit" id="submitBtn">Research</button>
         </form>
-
-        <div class="chat" id="chat">
-          <div class="empty-state" id="emptyState">Enter a company name or ticker above to generate a research report.</div>
-        </div>
       </div>
     </div>
   </div>
@@ -425,12 +463,18 @@
   <script>
     const BACKEND_URL = window.FINSIGHT_BACKEND_URL || "http://localhost:8000";
     const STORAGE_KEY = "finsight_conversations";
-    const EMPTY_STATE_HTML = '<div class="empty-state" id="emptyState">Enter a company name or ticker above to generate a research report.</div>';
+    const EMPTY_STATE_HTML = '<div class="empty-state" id="emptyState">Ask about a company or crypto asset to generate a research report.</div>';
 
+    const app = document.getElementById("app");
+    const mainCol = document.getElementById("mainCol");
     const chat = document.getElementById("chat");
     const submitBtn = document.getElementById("submitBtn");
     const conversationList = document.getElementById("conversationList");
     const sidebar = document.getElementById("sidebar");
+
+    function setEmptyMode(isEmpty) {
+      app.classList.toggle("empty", isEmpty);
+    }
 
     // ---------- Conversation storage ----------
     function loadConversations() {
@@ -508,15 +552,17 @@
       chat.innerHTML = "";
       if (!conv.turns.length) {
         chat.innerHTML = EMPTY_STATE_HTML;
+        setEmptyMode(true);
       } else {
         for (const turn of conv.turns) {
           if (turn.type === "user") addUserBubble(turn.text);
           else if (turn.type === "error") addErrorBubble(turn.text);
           else addAgentBubble(turn.reportMd, turn.marketData, turn.intent, turn.socialPosts);
         }
+        setEmptyMode(false);
       }
       renderSidebar();
-      chat.scrollTop = chat.scrollHeight;
+      mainCol.scrollTop = mainCol.scrollHeight;
     }
 
     function startNewConversation() {
@@ -525,6 +571,7 @@
       saveConversations(conversations);
       activeId = conv.id;
       chat.innerHTML = EMPTY_STATE_HTML;
+      setEmptyMode(true);
       renderSidebar();
     }
 
@@ -543,30 +590,80 @@
       let out = escapeHtml(text);
       out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
       out = out.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+      out = out.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, "<em>$1</em>");
       return out;
+    }
+
+    function isTableRow(line) {
+      return line.startsWith("|") && line.endsWith("|");
+    }
+
+    function isTableSeparatorRow(line) {
+      return /^\|[\s:|-]+\|$/.test(line);
+    }
+
+    function splitTableRow(line) {
+      return line.slice(1, -1).split("|").map((cell) => cell.trim());
     }
 
     function renderMarkdown(md) {
       const lines = md.split("\n");
       let html = "";
       let inList = false;
+      let tableRows = null;
+
+      const flushList = () => {
+        if (inList) { html += "</ul>"; inList = false; }
+      };
+      const flushTable = () => {
+        if (!tableRows) return;
+        const [headerRow, ...bodyRows] = tableRows;
+        html += "<div class=\"table-wrap\"><table>";
+        html += "<thead><tr>" + headerRow.map((c) => `<th>${inlineFormat(c)}</th>`).join("") + "</tr></thead>";
+        if (bodyRows.length) {
+          html += "<tbody>" + bodyRows.map((row) =>
+            "<tr>" + row.map((c) => `<td>${inlineFormat(c)}</td>`).join("") + "</tr>"
+          ).join("") + "</tbody>";
+        }
+        html += "</table></div>";
+        tableRows = null;
+      };
 
       for (const rawLine of lines) {
         const line = rawLine.trim();
         if (!line) continue;
 
-        if (line.startsWith("### ")) {
-          if (inList) { html += "</ul>"; inList = false; }
+        if (isTableRow(line)) {
+          flushList();
+          if (isTableSeparatorRow(line)) continue;
+          if (!tableRows) tableRows = [];
+          tableRows.push(splitTableRow(line));
+          continue;
+        }
+        flushTable();
+
+        if (/^-{3,}$/.test(line)) {
+          flushList();
+          html += "<hr>";
+        } else if (line.startsWith("### ")) {
+          flushList();
           html += `<h3>${inlineFormat(line.slice(4))}</h3>`;
+        } else if (line.startsWith("## ")) {
+          flushList();
+          html += `<h3>${inlineFormat(line.slice(3))}</h3>`;
+        } else if (line.startsWith("# ")) {
+          flushList();
+          html += `<h3>${inlineFormat(line.slice(2))}</h3>`;
         } else if (line.startsWith("* ") || line.startsWith("- ")) {
           if (!inList) { html += "<ul>"; inList = true; }
           html += `<li>${inlineFormat(line.slice(2))}</li>`;
         } else {
-          if (inList) { html += "</ul>"; inList = false; }
+          flushList();
           html += `<p>${inlineFormat(line)}</p>`;
         }
       }
-      if (inList) html += "</ul>";
+      flushList();
+      flushTable();
       return html;
     }
 
@@ -655,12 +752,13 @@
 
       const emptyState = document.getElementById("emptyState");
       if (emptyState) emptyState.remove();
+      setEmptyMode(false);
       addUserBubble(query);
       persistActiveTurn({ type: "user", text: query });
       input.value = "";
       submitBtn.disabled = true;
       const statusEl = addStatusBubble();
-      chat.scrollTop = chat.scrollHeight;
+      mainCol.scrollTop = mainCol.scrollHeight;
 
       try {
         const res = await fetch(`${BACKEND_URL}/research`, {
@@ -691,7 +789,7 @@
         persistActiveTurn({ type: "error", text: msg });
       } finally {
         submitBtn.disabled = false;
-        chat.scrollTop = chat.scrollHeight;
+        mainCol.scrollTop = mainCol.scrollHeight;
       }
     });
 

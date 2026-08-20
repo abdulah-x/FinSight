@@ -57,7 +57,9 @@ route_query (classifies intent: quick_news | full_report | out_of_scope)
   output.
 - **FastAPI** (`FinSight-Backend/main.py`): exposes `POST /research`, accepting a
   client-generated `session_id` (falls back to a generated UUID) that's passed as the
-  LangGraph `thread_id` so conversational memory works across requests.
+  LangGraph `thread_id` so conversational memory works across requests. Each graph
+  invocation attaches a Langfuse `CallbackHandler` via `config["callbacks"]`, giving full
+  traces of the node sequence, LLM calls, and tool calls per request for observability.
 - **Frontend** (`FinSight-Frontend/index.html`): a static HTML/JS chat UI (served via nginx)
   with a sidebar listing conversations (persisted client-side in `localStorage`, titled from
   the first query, sorted newest-first). Each turn renders as a chat bubble labeled "Quick
@@ -74,7 +76,7 @@ route_query (classifies intent: quick_news | full_report | out_of_scope)
   agent can call, and to manage the LLM client itself.
 - **LangGraph**: gives explicit control over the multi-step flow (fetch → fetch → synthesize)
   with branching, which is more representative of real agent work than a single chain.
-- **Groq (`llama-3.3-70b-versatile`)**: free tier, very fast inference, reliable enough for
+- **Groq (`openai/gpt-oss-120b`)**: free tier, very fast inference, reliable enough for
   ticker extraction and report writing.
 - **Tavily**: purpose-built search API for LLM agents with a free tier and native LangChain
   integration.
@@ -84,6 +86,9 @@ route_query (classifies intent: quick_news | full_report | out_of_scope)
   sentiment/discussion for stocks and crypto — a zero-cost substitute for X/Twitter, whose
   API now requires a paid tier for read access. (Reddit's public JSON endpoint was tried
   first but is now blocked by Cloudflare bot detection without OAuth.)
+- **Langfuse**: drop-in LangChain/LangGraph callback handler for LLM observability — free
+  tier, no code changes to the graph itself, gives per-request traces of node execution,
+  prompts, and latency without building custom logging.
 
 ## Running it
 Two containers, wired with docker-compose:
@@ -93,6 +98,7 @@ Two containers, wired with docker-compose:
 ```bash
 cp .env.example .env
 # fill in GROQ_API_KEY and TAVILY_API_KEY in .env
+# LANGFUSE_* keys are optional — omit them and the app still runs, just without traces
 docker compose up --build
 ```
 
