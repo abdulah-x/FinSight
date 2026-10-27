@@ -11,12 +11,15 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from langchain_core.messages import HumanMessage
 from langgraph.types import Command
 from pydantic import UUID4, BaseModel, Field
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 import db
 from graph import MAX_QUERY_CHARS, agent_graph
@@ -36,12 +39,29 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="FinSight API", lifespan=lifespan)
 
+# Per-IP rate limit on the endpoints that spend LLM tokens (denial-of-wallet protection).
+# 429 + Retry-After when exceeded. In-memory: per server process, resets on restart.
+RATE_LIMIT = os.environ.get("RATE_LIMIT", "10/minute")
+limiter = Limiter(key_func=get_remote_address, headers_enabled=True)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Only the frontend's own origin may call the API from a browser.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tightened to the frontend origin in Stage 6.5
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=os.environ.get("FRONTEND_ORIGIN", "http://localhost:8080").split(","),
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
 )
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Cache-Control"] = "no-store"  # analyses are per-session; don't cache them in proxies
+    return response
 
 # Langfuse tracing is optional: only attached when its keys are configured.
 callbacks = []
@@ -118,18 +138,21 @@ def _run(graph_input, session_id: str) -> AnalyzeResponse:
 
 
 @app.post("/analyze", response_model=AnalyzeResponse)
-def analyze(request: AnalyzeRequest):
-    session_id = str(request.session_id or uuid.uuid4())
-    return _run({"messages": [HumanMessage(request.query)]}, session_id)
+@limiter.limit(RATE_LIMIT)
+def analyze(request: Request, response: Response, body: AnalyzeRequest):
+    # `request`: the limiter reads the client IP from it; `response`: it adds the X-RateLimit headers to it
+    session_id = str(body.session_id or uuid.uuid4())
+    return _run({"messages": [HumanMessage(body.query)]}, session_id)
 
 
 @app.post("/resume", response_model=AnalyzeResponse)
-def resume(request: ResumeRequest):
-    session_id = str(request.session_id)
+@limiter.limit(RATE_LIMIT)
+def resume(request: Request, response: Response, body: ResumeRequest):
+    session_id = str(body.session_id)
     state = agent_graph.get_state({"configurable": {"thread_id": session_id}})
     if not (state.tasks and state.tasks[0].interrupts):  # only a paused conversation can be resumed
         raise HTTPException(status_code=409, detail="This session is not waiting for an answer.")
-    return _run(Command(resume=request.answer), session_id)
+    return _run(Command(resume=body.answer), session_id)
 
 
 @app.get("/health")

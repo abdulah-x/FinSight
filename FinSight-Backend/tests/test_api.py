@@ -18,6 +18,12 @@ from test_graph import FakeGuard, FakeNewsLLM, ScriptedLLM, asks, fake_gather_ev
 client = TestClient(main.app, raise_server_exceptions=False)
 
 
+@pytest.fixture(autouse=True)
+def fresh_rate_limit():
+    """Every test request comes from the same 'IP', so each test starts with a clean count."""
+    main.limiter.reset()
+
+
 @contextmanager
 def models(llm, guard=None, news=None):
     """Fake LLMs + fake evidence tool; db.save_prediction replaced by a recorder."""
@@ -136,6 +142,42 @@ def test_resume_without_a_pending_question_is_409():
 
 def test_health():
     assert client.get("/health").json() == {"status": "ok", "predictions_storage": False}
+
+
+# ---------- Stage 6.5: security ----------
+
+def test_rate_limit_returns_429_after_10_requests_a_minute():
+    with models(ScriptedLLM(), guard=FakeGuard(category="off_topic")):  # refusals: cheap, no LLM
+        codes = [client.post("/analyze", json={"query": "poem"}).status_code for _ in range(11)]
+    assert codes[:10] == [200] * 10 and codes[10] == 429
+
+
+def test_rate_limit_also_covers_resume():
+    codes = [client.post("/resume", json={"session_id": str(uuid.uuid4()), "answer": "4H"}).status_code
+             for _ in range(11)]
+    assert codes[10] == 429
+
+
+def test_rate_limit_response_says_when_to_retry():
+    with models(ScriptedLLM(), guard=FakeGuard(category="off_topic")):
+        for _ in range(10):
+            client.post("/analyze", json={"query": "poem"})
+        r = client.post("/analyze", json={"query": "poem"})
+    assert r.status_code == 429 and "retry-after" in r.headers
+
+
+def test_cors_allows_only_the_frontend_origin():
+    def preflight(origin):
+        return client.options("/analyze", headers={"Origin": origin, "Access-Control-Request-Method": "POST"})
+    assert preflight("http://localhost:8080").headers.get("access-control-allow-origin") == "http://localhost:8080"
+    assert "access-control-allow-origin" not in preflight("https://evil.example").headers
+
+
+def test_security_headers_on_every_response():
+    headers = client.get("/health").headers
+    assert headers["x-content-type-options"] == "nosniff"
+    assert headers["x-frame-options"] == "DENY"
+    assert headers["cache-control"] == "no-store"
 
 
 # ---------- the real database (pytest -m live) ----------

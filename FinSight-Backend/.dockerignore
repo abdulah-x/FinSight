@@ -1,0 +1,11 @@
+# Keep secrets, local tooling and test-only files out of the Docker image.
+.env
+.env.*
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+tests/
+requirements-dev.txt
+pytest.ini
+eval/last_run.json

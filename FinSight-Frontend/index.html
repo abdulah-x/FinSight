@@ -581,14 +581,18 @@
 
     // ---------- Rendering helpers ----------
     function escapeHtml(str) {
-      return str.replace(/[&<>"']/g, (c) => ({
+      return String(str).replace(/[&<>"']/g, (c) => ({
         "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
       }[c]));
     }
 
     function inlineFormat(text) {
       let out = escapeHtml(text);
-      out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+      // Only http(s) links become clickable. Anything else (javascript:, data:, ...) stays plain
+      // text: LLM output can repeat links from untrusted news, so the URL scheme must be checked.
+      out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, label, url) =>
+        /^https?:\/\//i.test(url) ? `<a href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>` : label
+      );
       out = out.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
       out = out.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, "<em>$1</em>");
       return out;
@@ -680,7 +684,7 @@
 
       if (!entries.length) return "";
       const cards = entries.map(([label, value]) =>
-        `<div class="metric"><div class="label">${label}</div><div class="value">${value}</div></div>`
+        `<div class="metric"><div class="label">${escapeHtml(label)}</div><div class="value">${escapeHtml(value)}</div></div>`
       ).join("");
       return `<div class="metrics-grid">${cards}</div>`;
     }
