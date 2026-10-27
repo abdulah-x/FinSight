@@ -337,3 +337,110 @@ def test_llm_failure_gives_a_busy_message_not_a_crash():
     result = run(BrokenLLM())
     assert result["messages"][-1].content == graph.LLM_BUSY
     assert result["stop_reason"] == "LLM unavailable (TimeoutError)"
+
+
+# ---------- Stage 5: confidence engine in the graph ----------
+
+CANNED = {
+    "price_action": {"symbol": "GC=F", "timeframe": "1D", "trend": "down", "last_price": 900.0,
+                     "ema20": 950.0, "ema50": 1000.0, "atr14": 10.0, "change_pct_20_bars": -5.0},
+    "macro": {"dollar_index": {"change_1d": 0.0, "change_5d": 1.0},
+              "us10y_yield": {"change_1d": 0.0, "change_5d": 20.0}},
+    "calendar": {"window_hours": 24, "high_impact_count": 0, "events": []},
+    "news": {"provider": "tavily", "articles": [{"title": "Gold slides as dollar jumps", "snippet": "..."}]},
+}
+
+
+@tool
+def fake_gather_evidence(symbol: str, timeframe: str, sources: list[str]) -> dict:
+    """fake: canned evidence for the requested sources"""
+    return {s: CANNED[s] for s in sources}
+
+
+fake_gather_evidence.name = "gather_evidence"
+
+
+class FakeNewsLLM:
+    def __init__(self, scores=None, raises=None):
+        self.scores, self.raises = scores or [], raises
+
+    def invoke(self, messages):
+        if self.raises:
+            raise self.raises
+        from state import NewsScores
+        return NewsScores(scores=self.scores)
+
+
+def gather(sources=("price_action", "macro", "calendar"), symbol="GC=F", timeframe="1D"):
+    return asks(("gather_evidence", {"symbol": symbol, "timeframe": timeframe, "sources": list(sources)}))
+
+
+def run_scored(llm, news_llm=None, **kwargs):
+    with patch.dict(graph.TOOLS_BY_NAME, {"gather_evidence": fake_gather_evidence}), \
+            patch.object(graph, "news_llm", news_llm or FakeNewsLLM()):
+        return run(llm, **kwargs)
+
+
+def test_bias_and_score_come_from_code_and_ready_is_replaced():
+    llm = ScriptedLLM(gather(), AIMessage(content="READY"), AIMessage(content="Summary: dollar and yields up."))
+    result = run_scored(llm, query="gold 1D", guard=FakeGuard(asset="GC=F", timeframe="1D"))
+
+    answer = result["messages"][-1].content
+    assert answer.startswith("Gold 1D - Bias: Bearish | Evidence score")
+    assert "Summary: dollar and yields up." in answer
+    assert "How the score was built:" in answer and "Not financial advice." in answer
+    assert not any(m.content == "READY" for m in result["messages"])  # replaced, not appended
+    assert result["analysis"]["bias"] == "Bearish" and result["analysis"]["asset"] == "GC=F"
+
+
+def test_the_writer_cannot_change_the_bias():
+    llm = ScriptedLLM(gather(), AIMessage(content="READY"), AIMessage(content="Bias: BULLISH, buy now!"))
+    result = run_scored(llm)
+    header = result["messages"][-1].content.splitlines()[0]
+    assert header.startswith("Gold 1D - Bias: Bearish |")  # the header is written by code
+    assert result["analysis"]["bias"] == "Bearish"         # and the stored result is untouched
+
+
+def test_writer_failure_still_returns_the_computed_answer():
+    class ReadyThenBroken(ScriptedLLM):
+        def invoke(self, messages):
+            if not self.replies:
+                raise TimeoutError()
+            return super().invoke(messages)
+
+    result = run_scored(ReadyThenBroken(gather(), AIMessage(content="READY")))
+    answer = result["messages"][-1].content
+    assert "Bias: Bearish" in answer and "Explanation unavailable" in answer
+    assert "How the score was built:" in answer
+
+
+def test_news_is_scored_by_the_small_model_and_counted():
+    llm = ScriptedLLM(gather(sources=("price_action", "news")), AIMessage(content="READY"), AIMessage(content="x"))
+    news = FakeNewsLLM(scores=[{"index": 0, "direction": -1, "relevance": 1.0}])
+    analysis = run_scored(llm, news_llm=news)["analysis"]
+    assert analysis["groups"]["news"] == -1.0
+
+
+def test_news_scoring_failure_counts_news_as_missing():
+    llm = ScriptedLLM(gather(sources=("price_action", "news")), AIMessage(content="READY"), AIMessage(content="x"))
+    analysis = run_scored(llm, news_llm=FakeNewsLLM(raises=TimeoutError()))["analysis"]
+    assert "news" not in analysis["groups"]
+
+
+def test_cap_hit_after_evidence_still_scores_it():
+    calls = [gather(sources=(s,)) for s in ("price_action", "macro", "calendar", "news")]
+    calls.append(gather(sources=("price_action", "macro")))  # 5th request: over the cap
+    llm = ScriptedLLM(*calls, AIMessage(content="explanation"))
+    result = run_scored(llm)
+    assert result["stop_reason"] == "max 4 tool rounds reached"
+    assert result["analysis"]["bias"] == "Bearish"
+    assert "Bias: Bearish" in result["messages"][-1].content
+
+
+def test_follow_up_without_new_evidence_is_answered_directly():
+    thread = str(uuid.uuid4())
+    run_scored(ScriptedLLM(gather(), AIMessage(content="READY"), AIMessage(content="x")), thread=thread)
+    result = run_scored(ScriptedLLM(AIMessage(content="Because price is below both EMAs.")),
+                        query="why?", thread=thread)
+    assert result["messages"][-1].content == "Because price is below both EMAs."
+    assert result["analysis"] is None  # no new evidence this turn, so no new score

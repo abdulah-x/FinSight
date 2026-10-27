@@ -23,8 +23,18 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
-from prompts import FINALIZE_PROMPT, GUARDRAIL_PROMPT, REFUSALS, SYSTEM_PROMPT
-from state import AgentState, GuardrailDecision
+from confidence import Assessment, assess
+from prompts import (
+    ASSET_NAMES,
+    FINALIZE_PROMPT,
+    GUARDRAIL_PROMPT,
+    NEWS_SCORING_PROMPT,
+    REFUSALS,
+    SCORE_FOOTNOTE,
+    SYSTEM_PROMPT,
+    WRITER_PROMPT,
+)
+from state import AgentState, GuardrailDecision, NewsScores
 from tools import gather_evidence
 
 # --- Hard caps (all in one place) ---
@@ -64,6 +74,10 @@ agent_llm = llm.bind_tools(TOOLS)
 guardrail_llm = ChatGroq(
     model="openai/gpt-oss-20b", temperature=0, timeout=LLM_TIMEOUT_SECONDS, max_retries=1,
 ).with_structured_output(GuardrailDecision)
+# Headline scoring also runs on the small model, all headlines in one call.
+news_llm = ChatGroq(
+    model="openai/gpt-oss-20b", temperature=0, timeout=LLM_TIMEOUT_SECONDS, max_retries=1,
+).with_structured_output(NewsScores)
 
 LLM_BUSY = "Sorry, the analysis service is busy right now. Please try again in a minute."
 
@@ -98,11 +112,31 @@ def _cap_reason(state: AgentState) -> str | None:
 
 
 def _tool_message(call: dict, output: dict) -> ToolMessage:
+    output = json.loads(json.dumps(output, default=str))  # plain JSON values (no numpy), so the checkpointer can save it
     return ToolMessage(
         content=f'<untrusted_data source="{call["name"]}">\n{json.dumps(output)}\n</untrusted_data>',
         name=call["name"],
         tool_call_id=call["id"],
+        artifact={"args": call["args"], "output": output},  # raw copy for our code; never sent to the LLM
     )
+
+
+def _turn_evidence(messages: list) -> tuple[str, str, dict] | None:
+    """(symbol, timeframe, {source: result}) gathered this turn, or None if nothing was.
+    Repeated gather_evidence calls for the same asset are merged; a new asset starts over."""
+    turn_start = max(i for i, m in enumerate(messages) if isinstance(m, HumanMessage))
+    gathered = None
+    for m in messages[turn_start:]:
+        if not (isinstance(m, ToolMessage) and m.name == "gather_evidence" and m.artifact):
+            continue
+        args, output = m.artifact["args"], m.artifact["output"]
+        if "error" in output:
+            continue
+        key = (args["symbol"], args["timeframe"])
+        if gathered is None or gathered[:2] != key:
+            gathered = (*key, {})
+        gathered[2].update(output)
+    return gathered
 
 
 def _run_tool(call: dict) -> dict:
@@ -123,7 +157,7 @@ def _parse_timeframe(text: str) -> str | None:
 def guardrail(state: AgentState) -> dict:
     """Fixed security check on every new message, before the agent spends any tokens.
     Also starts a fresh turn: the caps' counters reset here."""
-    turn = {"tool_rounds": 0, "started_at": time.time(), "seen_calls": [], "stop_reason": None}
+    turn = {"tool_rounds": 0, "started_at": time.time(), "seen_calls": [], "stop_reason": None, "analysis": None}
     query = state["messages"][-1].content
     if len(query) > MAX_QUERY_CHARS:
         return {**turn, "guardrail_result": "too_long"}
@@ -201,17 +235,82 @@ def tool_executor(state: AgentState) -> dict:
     }
 
 
-def finalize(state: AgentState) -> dict:
-    """A cap stopped the loop: answer the pending requests as 'not run', then make
-    the LLM write its answer from the evidence it has, with no tools available."""
-    reason = _cap_reason(state)
-    skipped = [_tool_message(c, {"error": f"not run: {reason}"}) for c in state["messages"][-1].tool_calls]
-    prompt = [SystemMessage(SYSTEM_PROMPT)] + _for_llm(state["messages"]) + skipped
+def _score_news(news: dict | None, symbol: str, timeframe: str) -> list[dict] | None:
+    """One small-model call scores all headlines at once. None = news counts as missing."""
+    if not news or "error" in news or not news.get("articles"):
+        return None
+    lines = [f"{i}. {a['title']}" + (f" - {a['snippet']}" if a.get("snippet") else "")
+             for i, a in enumerate(news["articles"])]
+    prompt = NEWS_SCORING_PROMPT.format(asset=ASSET_NAMES[symbol], timeframe=timeframe)
+    data = '<untrusted_data source="news">\n' + "\n".join(lines) + "\n</untrusted_data>"
     try:
-        response = llm.invoke(prompt + [SystemMessage(FINALIZE_PROMPT.format(reason=reason))])
+        result = news_llm.invoke([SystemMessage(prompt), HumanMessage(data)])
     except Exception:
-        response = AIMessage(content=LLM_BUSY)
-    return {"messages": skipped + [response], "stop_reason": reason}
+        return None
+    valid = {s.index: s for s in result.scores if 0 <= s.index < len(lines)}
+    return [{"direction": s.direction, "relevance": s.relevance} for s in valid.values()]
+
+
+def _compact(results: dict) -> dict:
+    """The evidence the writer sees: headlines only for news, no raw social posts."""
+    compact = dict(results)
+    if "news" in compact and "articles" in compact["news"]:
+        compact["news"] = [a["title"] for a in compact["news"]["articles"]]
+    if "social" in compact and "samples" in compact["social"]:
+        compact["social"] = {k: v for k, v in compact["social"].items() if k != "samples"}
+    return compact
+
+
+def _write_answer(assessment: Assessment, symbol: str, timeframe: str, results: dict) -> AIMessage:
+    """Header and breakdown come from code; only the explanation in between is LLM-written."""
+    asset = ASSET_NAMES[symbol]
+    prompt = WRITER_PROMPT.format(asset=asset, timeframe=timeframe, bias=assessment.bias,
+                                  score=assessment.score, bucket=assessment.bucket,
+                                  breakdown="\n".join(f"- {line}" for line in assessment.breakdown))
+    data = f'<untrusted_data source="evidence">\n{json.dumps(_compact(results), default=str)}\n</untrusted_data>'
+    try:
+        response = llm.invoke([SystemMessage(prompt), HumanMessage(data)])
+        explanation, usage = response.content.strip(), response.usage_metadata
+    except Exception:
+        explanation, usage = "(Explanation unavailable right now; the bias and score were computed from the evidence below.)", None
+
+    content = (
+        f"{asset} {timeframe} - Bias: {assessment.bias} | Evidence score {assessment.score}/100 ({assessment.bucket})"
+        f"\n\n{explanation}\n\nHow the score was built:\n"
+        + "\n".join(f"- {line}" for line in assessment.breakdown)
+        + f"\n\n{SCORE_FOOTNOTE}"
+    )
+    return AIMessage(content=content, usage_metadata=usage)
+
+
+def finalize(state: AgentState) -> dict:
+    """Turn this turn's evidence into the final answer. Runs when the agent says READY,
+    or when a cap stops the loop. The bias and score come from confidence.py; the LLM
+    only writes the explanation around them."""
+    last = state["messages"][-1]
+    reason = _cap_reason(state) if last.tool_calls else None
+    skipped = [_tool_message(c, {"error": f"not run: {reason}"}) for c in last.tool_calls]
+    update = {"stop_reason": reason} if reason else {}
+
+    gathered = _turn_evidence(state["messages"])
+    if gathered is None:  # a cap hit before any evidence came back: answer from what we have
+        prompt = [SystemMessage(SYSTEM_PROMPT)] + _for_llm(state["messages"]) + skipped
+        try:
+            response = llm.invoke(prompt + [SystemMessage(FINALIZE_PROMPT.format(reason=reason))])
+        except Exception:
+            response = AIMessage(content=LLM_BUSY)
+        return {**update, "messages": skipped + [response]}
+
+    symbol, timeframe, results = gathered
+    assessment = assess(results, symbol, timeframe, _score_news(results.get("news"), symbol, timeframe))
+    answer = _write_answer(assessment, symbol, timeframe, results)
+    if not last.tool_calls:
+        answer.id = last.id  # same id: replaces the agent's "READY" message instead of adding one
+    return {
+        **update,
+        "messages": skipped + [answer],
+        "analysis": {"asset": symbol, "timeframe": timeframe, **assessment.model_dump()},
+    }
 
 
 def after_guardrail(state: AgentState) -> Literal["agent", "refusal"]:
@@ -219,10 +318,11 @@ def after_guardrail(state: AgentState) -> Literal["agent", "refusal"]:
 
 
 def should_continue(state: AgentState) -> Literal["tool_executor", "finalize", "__end__"]:
-    """No tool_calls: the LLM is done. Otherwise run the tools, unless a cap says stop."""
-    if not state["messages"][-1].tool_calls:
-        return END
-    return "finalize" if _cap_reason(state) else "tool_executor"
+    """tool_calls: run them, unless a cap says stop. No tool_calls: the LLM is done, so
+    score the evidence (finalize), or end if it just answered from the conversation."""
+    if state["messages"][-1].tool_calls:
+        return "finalize" if _cap_reason(state) else "tool_executor"
+    return "finalize" if _turn_evidence(state["messages"]) else END
 
 
 def build_graph():

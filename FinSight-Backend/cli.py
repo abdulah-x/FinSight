@@ -38,8 +38,10 @@ def show(message, elapsed):
             text = json.dumps(result, ensure_ascii=False)
             flag = " [ERROR]" if "error" in result else ""
             print(f"          {source}{flag}: {text[:130]}{'...' if len(text) > 130 else ''}")
+    elif isinstance(message, AIMessage) and message.content.strip() == "READY":
+        print(f"\n{stamp} AGENT: enough evidence -> scoring engine + writer")
     elif isinstance(message, AIMessage):
-        print(f"\n{stamp} AGENT answers:\n\n{message.content}")
+        print(f"\n{stamp} ANSWER:\n\n{message.content}")
 
 
 def run_turn(graph_input, config, stats):
@@ -57,7 +59,7 @@ def run_turn(graph_input, config, stats):
                 print(f"\n[{elapsed:5.1f}s] REFUSED: {output['messages'][0].content}")
                 stats["stop_reason"] = "the guardrail (refused)"
                 continue
-            if node == "finalize":
+            if node == "finalize" and output.get("stop_reason"):
                 print(f"\n[{elapsed:5.1f}s] CAP HIT: {output['stop_reason']} -> finalize")
             stats.update(output)
             for message in output.get("messages", []):

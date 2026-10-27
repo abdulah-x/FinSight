@@ -17,6 +17,18 @@ class GuardrailDecision(BaseModel):
     timeframe: Timeframe | None = Field(None, description="Timeframe, only if stated or clear from context")
 
 
+class HeadlineScore(BaseModel):
+    index: int
+    direction: Literal[-1, 0, 1]
+    relevance: float = Field(ge=0, le=1)
+
+
+class NewsScores(BaseModel):
+    """What the news-scoring model must return: one score per numbered headline."""
+
+    scores: list[HeadlineScore]
+
+
 class AgentState(TypedDict):
     # add_messages is a reducer: when a node returns {"messages": [new]}, LangGraph
     # APPENDS `new` to the list instead of replacing it. That's how the conversation
@@ -29,3 +41,4 @@ class AgentState(TypedDict):
     started_at: float       # unix time evidence-gathering started (cap 2: deadline)
     seen_calls: list[str]   # "tool_name {args}" already run this turn (cap 3: no repeats)
     stop_reason: str | None  # why finalize was needed, if a cap stopped the loop
+    analysis: dict | None   # this turn's computed bias + score (confidence.Assessment), if any
