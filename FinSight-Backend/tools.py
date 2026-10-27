@@ -1,5 +1,6 @@
 import html
 import os
+from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Literal
 from urllib.parse import urlparse
@@ -338,3 +339,66 @@ def get_social_sentiment(symbol: Symbol) -> dict:
         "untagged": tags.count(None),
         "samples": [_short(m.get("body"), 150) for m in messages[:5]],
     }
+
+
+# ---------- gather_evidence: the one tool the agent sees ----------
+# gpt-oss on Groq makes only ONE tool call per turn, so separate tools meant one
+# LLM round per source (slow, ~10K tokens). Instead the agent picks a list of
+# sources in a single call and we fetch them in parallel.
+
+EvidenceSource = Literal["price_action", "macro", "calendar", "fear_greed", "funding", "news", "social"]
+_CRYPTO_ONLY = {"fear_greed", "funding"}
+_DEFAULT_NEWS_QUERY = {"BTC-USD": "bitcoin", "ETH-USD": "ethereum", "SOL-USD": "solana", "GC=F": "gold price"}
+SOURCE_TIMEOUT_SECONDS = 5  # below the agent's 6s tool timeout, so slow sources fail here, one by one
+_source_pool = ThreadPoolExecutor(max_workers=14)
+
+
+def _invoke_source(tool, args: dict) -> dict:
+    try:
+        return tool.invoke(args)
+    except Exception as e:
+        return {"error": f"{tool.name} failed: {e}"}
+
+
+@tool
+def gather_evidence(
+    symbol: Symbol,
+    timeframe: Timeframe,
+    sources: Annotated[list[EvidenceSource], Field(min_length=1, max_length=7)],
+    news_query: Annotated[str, Field(max_length=100)] = "",
+    calendar_hours: Annotated[int, Field(ge=1, le=168)] = 24,
+) -> dict:
+    """Fetch several evidence sources at once (they run in parallel). Pick only the
+    sources that matter for this asset and timeframe:
+    - price_action: trend, EMA20/50, 20-bar high/low, ATR for symbol + timeframe
+    - macro: dollar index, US 10y yield, VIX, S&P 500 (1d/5d changes; yields in bp)
+    - calendar: US medium/high-impact events in the next calendar_hours
+    - fear_greed: crypto Fear & Greed index. CRYPTO ONLY
+    - funding: Binance perpetual funding rate (crowd positioning). CRYPTO ONLY
+    - news: up to 5 recent headlines for news_query (defaults to the asset name)
+    - social: StockTwits retail mood (weak, noisy evidence)
+    Returns {source: result}. A source that fails returns {"error": ...}.
+    """
+    short_term = timeframe in ("1H", "4H")
+    calls = {
+        "price_action": (get_price_action, {"symbol": symbol, "timeframe": timeframe}),
+        "macro": (get_macro_snapshot, {}),
+        "calendar": (get_economic_calendar, {"hours_ahead": calendar_hours}),
+        "fear_greed": (get_crypto_fear_greed, {}),
+        "funding": (get_funding_rate, {"symbol": symbol}),
+        "news": (search_news, {"query": news_query or _DEFAULT_NEWS_QUERY[symbol],
+                               "time_range": "day" if short_term else "week"}),
+        "social": (get_social_sentiment, {"symbol": symbol}),
+    }
+
+    results, futures = {}, {}
+    for source in dict.fromkeys(sources):  # drop duplicates, keep order
+        if source in _CRYPTO_ONLY and symbol == "GC=F":
+            results[source] = {"error": f"{source} is crypto only, not available for gold"}
+        else:
+            futures[source] = _source_pool.submit(_invoke_source, *calls[source])
+
+    wait(futures.values(), timeout=SOURCE_TIMEOUT_SECONDS)
+    for source, future in futures.items():
+        results[source] = future.result() if future.done() else {"error": f"timed out after {SOURCE_TIMEOUT_SECONDS}s"}
+    return {source: results[source] for source in dict.fromkeys(sources)}

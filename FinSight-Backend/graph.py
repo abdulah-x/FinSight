@@ -19,15 +19,7 @@ from langgraph.graph import END, START, StateGraph
 
 from prompts import FINALIZE_PROMPT, SYSTEM_PROMPT
 from state import AgentState
-from tools import (
-    get_crypto_fear_greed,
-    get_economic_calendar,
-    get_funding_rate,
-    get_macro_snapshot,
-    get_price_action,
-    get_social_sentiment,
-    search_news,
-)
+from tools import gather_evidence
 
 # --- Hard caps (all in one place) ---
 MAX_TOOL_ROUNDS = 4        # cap 1: tool rounds per request
@@ -36,15 +28,9 @@ MAX_CALLS_PER_ROUND = 6    # cap 4a: extra calls in one round are not run
 TOOL_TIMEOUT_SECONDS = 6   # cap 4b: stop waiting for a slow tool
 RECURSION_LIMIT = 2 * MAX_TOOL_ROUNDS + 4  # cap 5: LangGraph's own backstop (should never trigger)
 
-TOOLS = [
-    get_price_action,
-    get_macro_snapshot,
-    get_economic_calendar,
-    get_crypto_fear_greed,
-    get_funding_rate,
-    search_news,
-    get_social_sentiment,
-]
+# One tool: gpt-oss on Groq makes a single tool call per turn, so the agent picks a
+# list of sources inside gather_evidence instead of calling 7 tools one by one.
+TOOLS = [gather_evidence]
 TOOLS_BY_NAME = {t.name: t for t in TOOLS}
 
 llm = ChatGroq(
@@ -52,7 +38,7 @@ llm = ChatGroq(
     temperature=0,
     model_kwargs={"reasoning_effort": "low"},  # less hidden thinking = fewer tokens
 )
-# bind_tools attaches the 7 menu cards (JSON schemas) to every request.
+# bind_tools attaches the tool's menu card (JSON schema) to every request.
 agent_llm = llm.bind_tools(TOOLS)
 
 # Shared pool: a hung tool keeps its thread, but we never wait for it (no pool shutdown).

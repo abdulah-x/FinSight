@@ -7,8 +7,9 @@ maths exactly and simulate outages. Live tests hit the real APIs once per tool.
     pytest -m live    # real APIs (uses 1 Tavily credit)
 """
 
+import time
 from datetime import datetime, timedelta, timezone
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
@@ -17,6 +18,7 @@ from pydantic import ValidationError
 
 import tools
 from tools import (
+    gather_evidence,
     get_crypto_fear_greed,
     get_economic_calendar,
     get_funding_rate,
@@ -302,6 +304,101 @@ def test_social_blocked_is_an_error_not_an_empty_list(_):
     assert "403" in get_social_sentiment.invoke({"symbol": "BTC-USD"})["error"]
 
 
+# ---------- gather_evidence ----------
+
+def fake_source(name, result=None, raises=None, sleep=0):
+    """A stand-in tool that records its args and returns `result` (default: its own name)."""
+    def invoke(args):
+        time.sleep(sleep)
+        if raises:
+            raise raises
+        fake.calls.append(args)
+        return result or {"from": name}
+    fake = MagicMock()
+    fake.name, fake.calls, fake.invoke.side_effect = name, [], invoke
+    return fake
+
+
+@pytest.fixture
+def sources():
+    """Replace all 7 underlying tools with fakes, so gather_evidence never touches the network."""
+    names = ["get_price_action", "get_macro_snapshot", "get_economic_calendar", "get_crypto_fear_greed",
+             "get_funding_rate", "search_news", "get_social_sentiment"]
+    fakes = {n: fake_source(n) for n in names}
+    with patch.multiple("tools", **fakes):
+        yield fakes
+
+
+def gather(**args):
+    return gather_evidence.invoke({"symbol": "BTC-USD", "timeframe": "1H", **args})
+
+
+def test_gather_runs_only_the_requested_sources(sources):
+    r = gather(sources=["price_action", "funding"])
+    assert list(r) == ["price_action", "funding"]
+    assert sources["get_price_action"].calls == [{"symbol": "BTC-USD", "timeframe": "1H"}]
+    assert sources["get_funding_rate"].calls == [{"symbol": "BTC-USD"}]
+    assert sources["get_macro_snapshot"].calls == []  # not asked for, not fetched
+
+
+def test_gather_crypto_only_sources_are_refused_for_gold(sources):
+    r = gather_evidence.invoke({"symbol": "GC=F", "timeframe": "1D", "sources": ["funding", "fear_greed", "macro"]})
+    assert "crypto only" in r["funding"]["error"] and "crypto only" in r["fear_greed"]["error"]
+    assert sources["get_funding_rate"].calls == []        # never even called
+    assert r["macro"] == {"from": "get_macro_snapshot"}   # the rest still runs
+
+
+def test_gather_news_defaults_to_asset_name_and_matches_timeframe(sources):
+    gather(sources=["news"])
+    gather_evidence.invoke({"symbol": "GC=F", "timeframe": "1W", "sources": ["news"]})
+    assert sources["search_news"].calls == [{"query": "bitcoin", "time_range": "day"},
+                                            {"query": "gold price", "time_range": "week"}]
+
+
+def test_gather_passes_news_query_and_calendar_window(sources):
+    gather(sources=["news", "calendar"], news_query="bitcoin ETF flows", calendar_hours=4)
+    assert sources["search_news"].calls[0]["query"] == "bitcoin ETF flows"
+    assert sources["get_economic_calendar"].calls == [{"hours_ahead": 4}]
+
+
+def test_gather_runs_sources_in_parallel(sources):
+    for name in ["get_price_action", "get_macro_snapshot", "get_economic_calendar", "search_news"]:
+        sources[name].invoke.side_effect = lambda args: time.sleep(0.5) or {"ok": True}
+    start = time.time()
+    gather(sources=["price_action", "macro", "calendar", "news"])
+    assert time.time() - start < 1.2  # one after another would take 2s
+
+
+def test_gather_one_failing_source_does_not_spoil_the_others(sources):
+    sources["get_price_action"].invoke.side_effect = RuntimeError("boom")
+    r = gather(sources=["price_action", "fear_greed"])
+    assert "boom" in r["price_action"]["error"]
+    assert r["fear_greed"] == {"from": "get_crypto_fear_greed"}
+
+
+def test_gather_slow_source_times_out_alone(sources):
+    sources["get_macro_snapshot"].invoke.side_effect = lambda args: time.sleep(2) or {"late": True}
+    with patch.object(tools, "SOURCE_TIMEOUT_SECONDS", 0.2):
+        r = gather(sources=["macro", "fear_greed"])
+    assert "timed out" in r["macro"]["error"]
+    assert r["fear_greed"] == {"from": "get_crypto_fear_greed"}
+
+
+def test_gather_duplicate_sources_are_fetched_once(sources):
+    r = gather(sources=["fear_greed", "fear_greed"])
+    assert list(r) == ["fear_greed"] and len(sources["get_crypto_fear_greed"].calls) == 1
+
+
+@pytest.mark.parametrize("bad", [
+    {"sources": []},                          # must ask for at least one
+    {"sources": ["horoscope"]},               # not an allowed source
+    {"sources": ["news"], "calendar_hours": 500},
+    {"sources": ["news"], "news_query": "x" * 101},
+])
+def test_gather_rejects_bad_arguments(bad):
+    with pytest.raises(ValidationError):
+        gather(**bad)
+
 # ---------- live: each real API, one at a time ----------
 
 @pytest.mark.live
@@ -314,8 +411,9 @@ def test_social_blocked_is_an_error_not_an_empty_list(_):
     (get_funding_rate, {"symbol": "SOL-USD"}, "latest_pct_8h"),
     (search_news, {"query": "bitcoin"}, "articles"),
     (get_social_sentiment, {"symbol": "ETH-USD"}, "posts"),
+    (gather_evidence, {"symbol": "BTC-USD", "timeframe": "4H", "sources": ["price_action", "fear_greed", "funding"]}, "funding"),
 ], ids=["price BTC 1H", "price gold 4H", "macro", "calendar", "fear_greed",
-        "funding SOL", "news", "social ETH"])
+        "funding SOL", "news", "social ETH", "gather BTC 4H"])
 def test_live(tool, args, expected_key):
     result = tool.invoke(args)
     assert "error" not in result, result["error"]

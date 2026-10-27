@@ -28,9 +28,14 @@ def show(message, elapsed):
         for call in message.tool_calls:
             print(f"          -> {call['name']}({json.dumps(call['args'])})")
     elif isinstance(message, ToolMessage):
-        body = message.content.split("\n", 1)[1].rsplit("\n", 1)[0]  # strip the untrusted_data tags
-        flag = "  [ERROR]" if '"error"' in body[:12] else ""
-        print(f"{stamp} TOOL {message.name}{flag}: {body[:160]}{'...' if len(body) > 160 else ''}")
+        body = json.loads(message.content.split("\n", 1)[1].rsplit("\n", 1)[0])  # strip the untrusted_data tags
+        print(f"{stamp} TOOL {message.name}:")
+        # gather_evidence returns {source: result}; anything else (e.g. an error) prints as one line
+        parts = body.items() if "error" not in body else [("result", body)]
+        for source, result in parts:
+            text = json.dumps(result, ensure_ascii=False)
+            flag = " [ERROR]" if "error" in result else ""
+            print(f"          {source}{flag}: {text[:130]}{'...' if len(text) > 130 else ''}")
     elif isinstance(message, AIMessage):
         print(f"\n{stamp} AGENT answers:\n\n{message.content}")
 

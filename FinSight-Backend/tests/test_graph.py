@@ -102,11 +102,16 @@ def test_tool_output_is_wrapped_as_untrusted():
 
 
 def test_invalid_args_become_an_error_message_not_a_crash():
-    # real get_funding_rate: gold isn't on its menu card, so validation fails
-    llm = ScriptedLLM(asks(("get_funding_rate", {"symbol": "GC=F"})), AIMessage(content="done"))
+    # real gather_evidence: "horoscope" isn't one of its allowed sources, so validation fails
+    bad = {"symbol": "BTC-USD", "timeframe": "1H", "sources": ["horoscope"]}
+    llm = ScriptedLLM(asks(("gather_evidence", bad)), AIMessage(content="done"))
     result = run(llm)
-    assert "invalid arguments for get_funding_rate" in result["messages"][2].content
+    assert "invalid arguments for gather_evidence" in result["messages"][2].content
     assert result["messages"][-1].content == "done"  # the loop carried on
+
+
+def test_agent_sees_only_the_gather_evidence_tool():
+    assert list(graph.TOOLS_BY_NAME) == ["gather_evidence"]
 
 
 def test_unknown_tool_becomes_an_error_message():
