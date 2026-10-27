@@ -23,6 +23,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
+import cache
 from confidence import Assessment, assess
 from prompts import (
     ASSET_NAMES,
@@ -157,7 +158,8 @@ def _parse_timeframe(text: str) -> str | None:
 def guardrail(state: AgentState) -> dict:
     """Fixed security check on every new message, before the agent spends any tokens.
     Also starts a fresh turn: the caps' counters reset here."""
-    turn = {"tool_rounds": 0, "started_at": time.time(), "seen_calls": [], "stop_reason": None, "analysis": None}
+    turn = {"tool_rounds": 0, "started_at": time.time(), "seen_calls": [], "stop_reason": None,
+            "analysis": None, "cache_hit": None}
     query = state["messages"][-1].content
     if len(query) > MAX_QUERY_CHARS:
         return {**turn, "guardrail_result": "too_long"}
@@ -166,12 +168,17 @@ def guardrail(state: AgentState) -> dict:
         decision = guardrail_llm.invoke([SystemMessage(prompt), HumanMessage(query)])
     except Exception:  # fail closed: if we can't check it, we don't run it
         return {**turn, "guardrail_result": "error"}
-    return {
-        **turn,
-        "guardrail_result": decision.category,
-        "asset": decision.asset or state.get("asset"),
-        "timeframe": decision.timeframe or state.get("timeframe"),
-    }
+    asset = decision.asset or state.get("asset")
+    timeframe = decision.timeframe or state.get("timeframe")
+    fresh_request = decision.category == "ok" and decision.new_analysis and asset and timeframe
+    return {**turn, "guardrail_result": decision.category, "asset": asset, "timeframe": timeframe,
+            "cache_hit": cache.get(asset, timeframe) if fresh_request else None}
+
+
+def serve_cached(state: AgentState) -> dict:
+    """Same asset + timeframe answered recently: reuse it (0 tokens, consistent answer)."""
+    hit = state["cache_hit"]
+    return {"messages": [AIMessage(content=hit["content"])], "analysis": hit["analysis"]}
 
 
 def refusal(state: AgentState) -> dict:
@@ -306,15 +313,21 @@ def finalize(state: AgentState) -> dict:
     answer = _write_answer(assessment, symbol, timeframe, results)
     if not last.tool_calls:
         answer.id = last.id  # same id: replaces the agent's "READY" message instead of adding one
-    return {
-        **update,
-        "messages": skipped + [answer],
-        "analysis": {"asset": symbol, "timeframe": timeframe, **assessment.model_dump()},
+
+    pa = results.get("price_action") or {}
+    analysis = {
+        "asset": symbol, "timeframe": timeframe, **assessment.model_dump(),
+        # what Stage 7 grades against: where price was, and how big a typical move is
+        "price": {k: pa[k] for k in ("last_price", "atr14", "trend")} if pa and "error" not in pa else None,
     }
+    cache.put(symbol, timeframe, {"content": answer.content, "analysis": analysis})
+    return {**update, "messages": skipped + [answer], "analysis": analysis}
 
 
-def after_guardrail(state: AgentState) -> Literal["agent", "refusal"]:
-    return "agent" if state["guardrail_result"] == "ok" else "refusal"
+def after_guardrail(state: AgentState) -> Literal["agent", "refusal", "serve_cached"]:
+    if state["guardrail_result"] != "ok":
+        return "refusal"
+    return "serve_cached" if state.get("cache_hit") else "agent"
 
 
 def should_continue(state: AgentState) -> Literal["tool_executor", "finalize", "__end__"]:
@@ -329,12 +342,14 @@ def build_graph():
     graph = StateGraph(AgentState)
     graph.add_node("guardrail", guardrail)
     graph.add_node("refusal", refusal)
+    graph.add_node("serve_cached", serve_cached)
     graph.add_node("agent", agent)
     graph.add_node("tool_executor", tool_executor)
     graph.add_node("finalize", finalize)
     graph.add_edge(START, "guardrail")
     graph.add_conditional_edges("guardrail", after_guardrail)
     graph.add_edge("refusal", END)
+    graph.add_edge("serve_cached", END)
     graph.add_conditional_edges("agent", should_continue)
     graph.add_edge("tool_executor", "agent")
     graph.add_edge("finalize", END)

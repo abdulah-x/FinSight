@@ -1,9 +1,31 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: finsight-postgres
+    environment:
+      POSTGRES_USER: finsight
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: finsight
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5433:5432"  # port 5433: 5432 is taken by a local PostgreSQL install. This machine only (for running the backend outside Docker), never the network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U finsight -d finsight"]
+      interval: 5s
+      retries: 10
+
   finsight-backend:
     build: ./FinSight-Backend
     container_name: finsight-backend
     env_file:
       - .env
+    environment:
+      # inside Docker the database is reached by service name, not 127.0.0.1
+      DATABASE_URL: postgresql://finsight:${POSTGRES_PASSWORD}@postgres:5432/finsight
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "8000:8000"
 
@@ -14,3 +36,6 @@ services:
       - finsight-backend
     ports:
       - "8080:80"
+
+volumes:
+  pgdata:

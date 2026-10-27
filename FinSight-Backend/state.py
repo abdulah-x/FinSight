@@ -15,6 +15,8 @@ class GuardrailDecision(BaseModel):
     )
     asset: Symbol | None = Field(None, description="Asset asked about, if stated or clear from context")
     timeframe: Timeframe | None = Field(None, description="Timeframe, only if stated or clear from context")
+    new_analysis: bool = Field(False, description="True if it asks for a bias/outlook on an asset and "
+                                                  "timeframe; false for questions about the previous answer")
 
 
 class HeadlineScore(BaseModel):
@@ -42,3 +44,4 @@ class AgentState(TypedDict):
     seen_calls: list[str]   # "tool_name {args}" already run this turn (cap 3: no repeats)
     stop_reason: str | None  # why finalize was needed, if a cap stopped the loop
     analysis: dict | None   # this turn's computed bias + score (confidence.Assessment), if any
+    cache_hit: dict | None  # a stored answer for this asset + timeframe, if one is fresh

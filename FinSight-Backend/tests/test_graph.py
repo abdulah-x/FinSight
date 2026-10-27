@@ -60,8 +60,9 @@ FAKE_TOOLS = {"get_price_action": get_price_action, "get_crypto_fear_greed": get
 class FakeGuard:
     """Stands in for the guardrail model: returns a fixed decision, records what it was sent."""
 
-    def __init__(self, category="ok", asset="BTC-USD", timeframe="4H", raises=None):
-        self.decision = GuardrailDecision(category=category, asset=asset, timeframe=timeframe)
+    def __init__(self, category="ok", asset="BTC-USD", timeframe="4H", raises=None, new_analysis=False):
+        self.decision = GuardrailDecision(category=category, asset=asset, timeframe=timeframe,
+                                          new_analysis=new_analysis)
         self.raises, self.received = raises, []
 
     def invoke(self, messages):
