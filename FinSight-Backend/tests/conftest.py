@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 # Real keys for live tests; a dummy fallback so offline tests run without any .env.
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
 os.environ.setdefault("TAVILY_API_KEY", "test-key")
+os.environ.setdefault("GROQ_API_KEY", "test-key")
 
 import tools  # noqa: E402
 
