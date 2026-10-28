@@ -11,6 +11,7 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Literal
 
+from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -27,14 +28,41 @@ from graph import MAX_QUERY_CHARS, agent_graph
 log = logging.getLogger("finsight")
 
 
+def start_scheduler() -> BackgroundScheduler | None:
+    """Background jobs, only when predictions storage is on:
+    - resolver every 15 min: grades predictions whose time is up
+    - collector (opt-in, COLLECTOR_ENABLED=true): one engine run per asset each bar
+    """
+    if not db.enabled():
+        return None
+    import collector  # imported here: it pulls in the tools only when the jobs are wanted
+    import resolver
+
+    scheduler = BackgroundScheduler(timezone="UTC")
+    scheduler.add_job(resolver.resolve_due, "interval", minutes=15, id="resolver")
+    if os.environ.get("COLLECTOR_ENABLED", "").lower() == "true":
+        # a few minutes after each bar opens, so the new bar exists in the price data
+        scheduler.add_job(collector.collect, "cron", minute=5, args=[["1H"]], id="collect_1h")
+        scheduler.add_job(collector.collect, "cron", hour="0,4,8,12,16,20", minute=10, args=[["4H"]], id="collect_4h")
+        scheduler.add_job(collector.collect, "cron", hour=0, minute=15, args=[["1D"]], id="collect_1d")
+        scheduler.add_job(collector.collect, "cron", day_of_week="mon", hour=0, minute=20, args=[["1W"]], id="collect_1w")
+    scheduler.start()
+    log.info("scheduler started: %s", ", ".join(job.id for job in scheduler.get_jobs()))
+    return scheduler
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    scheduler = None
     try:
         db.init_db()
         log.info("predictions storage: %s", "on" if db.enabled() else "off (DATABASE_URL not set)")
+        scheduler = start_scheduler()
     except Exception:
-        log.exception("could not initialise the predictions table; continuing without storage")
+        log.exception("could not initialise storage or the scheduler; continuing without them")
     yield
+    if scheduler:
+        scheduler.shutdown(wait=False)
 
 
 app = FastAPI(title="FinSight API", lifespan=lifespan)

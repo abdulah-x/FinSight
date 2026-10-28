@@ -11,7 +11,10 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
 os.environ.setdefault("TAVILY_API_KEY", "test-key")
 os.environ.setdefault("GROQ_API_KEY", "test-key")
 # Offline tests must never write to the real database; db tests opt in with this value.
-REAL_DATABASE_URL = os.environ.pop("DATABASE_URL", None)
+# Set to "" rather than removed: load_dotenv() (e.g. on importing collector.py) never
+# overwrites an existing variable, so the real URL can't sneak back in.
+REAL_DATABASE_URL = os.environ.get("DATABASE_URL") or None
+os.environ["DATABASE_URL"] = ""
 
 import cache  # noqa: E402
 import tools  # noqa: E402

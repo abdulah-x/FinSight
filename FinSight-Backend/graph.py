@@ -242,7 +242,7 @@ def tool_executor(state: AgentState) -> dict:
     }
 
 
-def _score_news(news: dict | None, symbol: str, timeframe: str) -> list[dict] | None:
+def score_news(news: dict | None, symbol: str, timeframe: str) -> list[dict] | None:
     """One small-model call scores all headlines at once. None = news counts as missing."""
     if not news or "error" in news or not news.get("articles"):
         return None
@@ -309,19 +309,25 @@ def finalize(state: AgentState) -> dict:
         return {**update, "messages": skipped + [response]}
 
     symbol, timeframe, results = gathered
-    assessment = assess(results, symbol, timeframe, _score_news(results.get("news"), symbol, timeframe))
+    assessment, analysis = analyse(results, symbol, timeframe)
     answer = _write_answer(assessment, symbol, timeframe, results)
     if not last.tool_calls:
         answer.id = last.id  # same id: replaces the agent's "READY" message instead of adding one
+    cache.put(symbol, timeframe, {"content": answer.content, "analysis": analysis})
+    return {**update, "messages": skipped + [answer], "analysis": analysis}
 
+
+def analyse(results: dict, symbol: str, timeframe: str) -> tuple[Assessment, dict]:
+    """Evidence in, bias + score out (no writer). Shared by finalize and the collector,
+    so the scheduled forward test grades exactly the engine the trader sees."""
+    assessment = assess(results, symbol, timeframe, score_news(results.get("news"), symbol, timeframe))
     pa = results.get("price_action") or {}
     analysis = {
         "asset": symbol, "timeframe": timeframe, **assessment.model_dump(),
         # what Stage 7 grades against: where price was, and how big a typical move is
         "price": {k: pa[k] for k in ("last_price", "atr14", "trend")} if pa and "error" not in pa else None,
     }
-    cache.put(symbol, timeframe, {"content": answer.content, "analysis": analysis})
-    return {**update, "messages": skipped + [answer], "analysis": analysis}
+    return assessment, analysis
 
 
 def after_guardrail(state: AgentState) -> Literal["agent", "refusal", "serve_cached"]:
