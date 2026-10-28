@@ -174,6 +174,8 @@ def test_scheduler_jobs(monkeypatch, collector_on, jobs):
         scheduler = main.start_scheduler()
     try:
         assert {job.id for job in scheduler.get_jobs()} == jobs
+        # a job that wakes a few seconds late must still run, not be skipped
+        assert all(job.misfire_grace_time == 300 and job.coalesce for job in scheduler.get_jobs())
     finally:
         scheduler.shutdown(wait=False)
 

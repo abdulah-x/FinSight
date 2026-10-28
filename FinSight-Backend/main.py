@@ -43,7 +43,9 @@ def start_scheduler() -> BackgroundScheduler | None:
     import collector  # imported here: it pulls in the tools only when the jobs are wanted
     import resolver
 
-    scheduler = BackgroundScheduler(timezone="UTC")
+    # APScheduler skips a run that starts >1s late by default; Docker on a laptop wakes jobs
+    # a few seconds late (a resolver run was lost this way), so allow 5 min and merge backlogs
+    scheduler = BackgroundScheduler(timezone="UTC", job_defaults={"misfire_grace_time": 300, "coalesce": True})
     scheduler.add_job(resolver.resolve_due, "interval", minutes=15, id="resolver")
     if os.environ.get("COLLECTOR_ENABLED", "").lower() == "true":
         # a few minutes after each bar opens, so the new bar exists in the price data
