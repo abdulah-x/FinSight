@@ -25,6 +25,11 @@ from slowapi.util import get_remote_address
 import db
 from graph import MAX_QUERY_CHARS, agent_graph
 
+# Our own loggers (finsight, finsight.resolver, finsight.collector) print INFO lines,
+# e.g. "resolved 4 predictions"; uvicorn only configures its own loggers.
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s: %(message)s")
+for noisy in ("httpx", "apscheduler", "yfinance"):
+    logging.getLogger(noisy).setLevel(logging.WARNING)
 log = logging.getLogger("finsight")
 
 
