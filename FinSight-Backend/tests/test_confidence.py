@@ -230,3 +230,18 @@ def test_assess_counts_news_only_when_scored():
     assert assess(results, "BTC-USD", "1D").groups.get("news") is None           # scorer failed
     scored = assess(results, "BTC-USD", "1D", [{"direction": 1, "relevance": 1.0}])
     assert scored.groups["news"] == 1.0
+
+
+def test_item_and_group_labels_never_disagree():
+    # the live BTC 4H case: price just above both EMAs -> weak half-strength bullish
+    a = assess({"price_action": pa("mixed", last=81347.86, ema20=80570.74, ema50=80990.49, atr=692.79)},
+               "BTC-USD", "4H")
+    line = next(b for b in a.breakdown if b.startswith("Price"))
+    assert line.startswith("Price (40%): weak bullish - ") and line.endswith("[weak bullish]")
+
+
+@pytest.mark.parametrize("value, label", [(0.0, "neutral"), (0.04, "neutral"), (0.09, "weak bullish"),
+                                          (-0.2, "weak bearish"), (0.34, "bullish"), (-1.0, "bearish")])
+def test_strength_labels(value, label):
+    from confidence import _word
+    assert _word(value) == label

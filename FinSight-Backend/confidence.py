@@ -84,8 +84,13 @@ def _sign(x: float) -> int:
     return int(x > 0) - int(x < 0)  # int() also handles numpy numbers from the tools
 
 
-def _word(direction: float) -> str:
-    return "bullish" if direction > 0.1 else "bearish" if direction < -0.1 else "neutral"
+def _word(value: float) -> str:
+    """Label for a signed strength (direction x strength), used for items AND groups so
+    the two can never disagree (a weak bullish item inside a 'neutral' group)."""
+    if abs(value) < 0.05:
+        return "neutral"
+    side = "bullish" if value > 0 else "bearish"
+    return side if abs(value) >= 0.34 else f"weak {side}"
 
 
 # ---------- tool result -> evidence (one rule per source) ----------
@@ -217,7 +222,7 @@ def score(evidence: list[Evidence], symbol: str, timeframe: str,
     for g, w in sorted(expected.items(), key=lambda kv: -kv[1]):
         if g in groups:
             # every item carries its own direction, so a mixed group can't be misread
-            reasons = "; ".join(f"{e.rationale} [{_word(e.direction)}]" for e in evidence if e.group == g)
+            reasons = "; ".join(f"{e.rationale} [{_word(e.direction * e.strength)}]" for e in evidence if e.group == g)
             breakdown.append(f"{GROUP_LABELS[g]} ({w:.0%}): {_word(groups[g])} - {reasons}")
         else:
             breakdown.append(f"{GROUP_LABELS[g]} ({w:.0%}): missing")
