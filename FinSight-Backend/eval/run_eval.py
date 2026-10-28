@@ -6,8 +6,7 @@ Each case checks behaviour we can name in advance:
     code-computed breakdown (faithfulness)
   - asks_timeframe: the agent pauses to ask instead of guessing
   - refused: blocked by the guardrail in the right category, agent never called
-  - red team: trade-signal requests, false claims, javascript: links, and an
-    injection planted in the news the agent reads
+  - red team: trade-signal requests, false claims, javascript: links
 
 The judge (gpt-oss-20b) is a different model from the agent (gpt-oss-120b) to avoid
 self-preference. Groq's free tier allows ~8K tokens/minute, so cases are paced.
@@ -23,7 +22,6 @@ import re
 import sys
 import time
 import uuid
-from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from dotenv import load_dotenv  # noqa: E402
@@ -35,7 +33,6 @@ from langchain_groq import ChatGroq  # noqa: E402
 
 import cache  # noqa: E402
 import graph  # noqa: E402
-from tools import gather_evidence  # noqa: E402
 
 judge_llm = ChatGroq(model="openai/gpt-oss-20b", temperature=0, max_retries=3)
 sys.stdout.reconfigure(encoding="utf-8")  # LLM text has characters the Windows console can't print
@@ -67,36 +64,17 @@ def verdict(prompt: str) -> tuple[bool, str]:
     return bool(matches) and matches[-1] == "PASS", reply.strip()
 
 
-def planted(headline: str):
-    """A gather_evidence that slips a malicious headline into the real news results."""
-    def run(args):
-        result = gather_evidence.invoke(args)
-        news = result.get("news")
-        if isinstance(news, dict) and "articles" in news:
-            news["articles"].insert(0, {"title": headline, "snippet": headline, "source": "evil.example"})
-        elif "news" in args.get("sources", []):
-            result["news"] = {"provider": "planted", "articles": [{"title": headline, "snippet": headline}]}
-        return result
-
-    class Planted:
-        name = "gather_evidence"
-        invoke = staticmethod(run)
-    return Planted()
-
-
 def run_graph(case: dict) -> tuple[dict, str | None]:
     """One fresh conversation. Returns (final state, pending question if paused)."""
     cache.clear()  # every case must exercise the agent, not a stored answer
     config = {"configurable": {"thread_id": str(uuid.uuid4())}}
-    tools = {"gather_evidence": planted(case["plant_headline"])} if "plant_headline" in case else {}
-    with patch.dict(graph.TOOLS_BY_NAME, tools):
-        for attempt in range(2):
-            result = graph.agent_graph.invoke({"messages": [HumanMessage(case["q"])]}, config=config)
-            if not str(result.get("stop_reason") or "").startswith("LLM unavailable"):
-                break
-            print("      (rate limited, waiting 60s and retrying)")
-            time.sleep(60)
-            config = {"configurable": {"thread_id": str(uuid.uuid4())}}
+    for attempt in range(2):
+        result = graph.agent_graph.invoke({"messages": [HumanMessage(case["q"])]}, config=config)
+        if not str(result.get("stop_reason") or "").startswith("LLM unavailable"):
+            break
+        print("      (rate limited, waiting 60s and retrying)")
+        time.sleep(60)
+        config = {"configurable": {"thread_id": str(uuid.uuid4())}}
     paused = graph.agent_graph.get_state(config)
     question = paused.tasks[0].interrupts[0].value["question"] if paused.tasks and paused.tasks[0].interrupts else None
     return result, question

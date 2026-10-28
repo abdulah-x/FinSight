@@ -1,21 +1,24 @@
-"""The HTTP API, driven through FastAPI's TestClient with fake models (no network, no real DB)."""
+"""The HTTP API through FastAPI's TestClient: real graph, real Groq, real tools, and a
+real Postgres (the separate finsight_test database).
+
+Request validation, CORS and security headers need no network and run offline.
+
+    pytest -m live tests/test_api.py    # ~4 min (paced for Groq's free tier)
+"""
 
 import uuid
-from contextlib import contextmanager
-from unittest.mock import MagicMock, patch
 
 import psycopg
 import pytest
-from conftest import REAL_DATABASE_URL
+from conftest import rows, unreachable_groq
 from fastapi.testclient import TestClient
-from langchain_core.messages import AIMessage
 
 import db
 import graph
 import main
-from test_graph import FakeGuard, FakeNewsLLM, ScriptedLLM, asks, fake_gather_evidence, gather
 
 client = TestClient(main.app, raise_server_exceptions=False)
+live = pytest.mark.live
 
 
 @pytest.fixture(autouse=True)
@@ -24,65 +27,7 @@ def fresh_rate_limit():
     main.limiter.reset()
 
 
-@contextmanager
-def models(llm, guard=None, news=None):
-    """Fake LLMs + fake evidence tool; db.save_prediction replaced by a recorder."""
-    save = MagicMock(return_value=1)
-    with patch.object(graph, "agent_llm", llm), patch.object(graph, "llm", llm), \
-            patch.object(graph, "guardrail_llm", guard or FakeGuard(asset="GC=F", timeframe="1D", new_analysis=True)), \
-            patch.object(graph, "news_llm", news or FakeNewsLLM()), \
-            patch.dict(graph.TOOLS_BY_NAME, {"gather_evidence": fake_gather_evidence}), \
-            patch.object(main.db, "save_prediction", save):
-        yield save
-
-
-def full_run():
-    """An agent that gathers evidence, says READY, then writes an explanation."""
-    return ScriptedLLM(gather(), AIMessage(content="READY"), AIMessage(content="Summary: price and dollar agree."))
-
-
-# ---------- /analyze ----------
-
-def test_analyze_returns_a_structured_analysis_and_stores_it():
-    with models(full_run()) as save:
-        r = client.post("/analyze", json={"query": "gold 1D"})
-    assert r.status_code == 200
-    body = r.json()
-    assert body["status"] == "complete" and body["cached"] is False
-    assert body["analysis"]["bias"] == "Bearish" and body["analysis"]["asset"] == "GC=F"
-    assert body["answer"].startswith("Gold 1D - Bias: Bearish")
-    uuid.UUID(body["session_id"], version=4)  # a fresh session id was issued
-    save.assert_called_once()
-    assert save.call_args.args[0]["price"] == {"last_price": 900.0, "atr14": 10.0, "trend": "down"}
-
-
-def test_repeat_request_is_served_from_cache_without_llm_or_storage():
-    with models(full_run()):
-        client.post("/analyze", json={"query": "gold 1D"})
-    no_llm = ScriptedLLM()  # would crash if called
-    with models(no_llm) as save:
-        r = client.post("/analyze", json={"query": "gold daily please"})
-    body = r.json()
-    assert body["cached"] is True and body["analysis"]["bias"] == "Bearish"
-    assert no_llm.received == []
-    save.assert_not_called()  # counted once, when it was first made
-
-
-def test_follow_up_question_bypasses_the_cache():
-    with models(full_run()):
-        first = client.post("/analyze", json={"query": "gold 1D"}).json()
-    llm = ScriptedLLM(AIMessage(content="Because price is under both EMAs."))
-    with models(llm, guard=FakeGuard(asset="GC=F", timeframe="1D", new_analysis=False)):
-        r = client.post("/analyze", json={"query": "why?", "session_id": first["session_id"]})
-    assert r.json()["answer"] == "Because price is under both EMAs." and r.json()["cached"] is False
-
-
-def test_refused_query_has_no_analysis():
-    with models(ScriptedLLM(), guard=FakeGuard(category="off_topic")):
-        body = client.post("/analyze", json={"query": "write me a poem"}).json()
-    assert body["status"] == "refused" and body["analysis"] is None
-    assert body["answer"] == graph.REFUSALS["off_topic"]
-
+# ---------- offline: validation, sessions, headers ----------
 
 @pytest.mark.parametrize("payload", [
     {"query": ""},
@@ -95,75 +40,22 @@ def test_bad_requests_are_rejected_with_422(payload):
     assert client.post("/analyze", json=payload).status_code == 422
 
 
-def test_llm_busy_returns_503_with_retry_after():
-    class Broken:
-        def invoke(self, messages):
-            raise TimeoutError()
-
-    with models(Broken()):
-        r = client.post("/analyze", json={"query": "gold 1D"})
-    assert r.status_code == 503 and r.headers["retry-after"] == "60"
-
-
-def test_unexpected_error_is_a_generic_500_without_internals():
-    with patch.object(main.agent_graph, "invoke", side_effect=RuntimeError("secret internal detail")):
-        r = client.post("/analyze", json={"query": "gold 1D"})
-    assert r.status_code == 500
-    assert "secret" not in r.text and r.json() == {"detail": "Something went wrong. Please try again."}
-
-
-def test_storage_failure_does_not_fail_the_request():
-    with models(full_run()) as save:
-        save.side_effect = psycopg.OperationalError("db down")
-        r = client.post("/analyze", json={"query": "gold 1D"})
-    assert r.status_code == 200 and r.json()["analysis"]["bias"] == "Bearish"
-
-
-# ---------- needs_input -> /resume ----------
-
-def test_question_then_resume_completes_the_analysis():
-    llm = ScriptedLLM(asks(("ask_user", {"question": "Which timeframe: 1H, 4H, 1D or 1W?"})),
-                      gather(), AIMessage(content="READY"), AIMessage(content="Summary."))
-    guard = FakeGuard(asset="GC=F", timeframe=None, new_analysis=True)
-    with models(llm, guard=guard):
-        first = client.post("/analyze", json={"query": "gold?"}).json()
-        assert first["status"] == "needs_input"
-        assert first["question"] == "Which timeframe: 1H, 4H, 1D or 1W?"
-
-        r = client.post("/resume", json={"session_id": first["session_id"], "answer": "1D"})
-    assert r.status_code == 200 and r.json()["status"] == "complete"
-    assert r.json()["analysis"]["bias"] == "Bearish"
-
-
 def test_resume_without_a_pending_question_is_409():
     r = client.post("/resume", json={"session_id": str(uuid.uuid4()), "answer": "4H"})
     assert r.status_code == 409
 
 
-def test_health():
+def test_resume_rate_limit_returns_429_with_retry_after():
+    codes = []
+    for _ in range(11):
+        r = client.post("/resume", json={"session_id": str(uuid.uuid4()), "answer": "4H"})
+        codes.append(r.status_code)
+    assert codes[:10] == [409] * 10 and codes[10] == 429
+    assert "retry-after" in r.headers
+
+
+def test_health_reports_storage_off_without_a_database():
     assert client.get("/health").json() == {"status": "ok", "predictions_storage": False}
-
-
-# ---------- Stage 6.5: security ----------
-
-def test_rate_limit_returns_429_after_10_requests_a_minute():
-    with models(ScriptedLLM(), guard=FakeGuard(category="off_topic")):  # refusals: cheap, no LLM
-        codes = [client.post("/analyze", json={"query": "poem"}).status_code for _ in range(11)]
-    assert codes[:10] == [200] * 10 and codes[10] == 429
-
-
-def test_rate_limit_also_covers_resume():
-    codes = [client.post("/resume", json={"session_id": str(uuid.uuid4()), "answer": "4H"}).status_code
-             for _ in range(11)]
-    assert codes[10] == 429
-
-
-def test_rate_limit_response_says_when_to_retry():
-    with models(ScriptedLLM(), guard=FakeGuard(category="off_topic")):
-        for _ in range(10):
-            client.post("/analyze", json={"query": "poem"})
-        r = client.post("/analyze", json={"query": "poem"})
-    assert r.status_code == 429 and "retry-after" in r.headers
 
 
 def test_cors_allows_only_the_frontend_origin():
@@ -180,21 +72,82 @@ def test_security_headers_on_every_response():
     assert headers["cache-control"] == "no-store"
 
 
-# ---------- the real database (pytest -m live) ----------
+# ---------- live ----------
 
-@pytest.mark.live
-@pytest.mark.skipif(not REAL_DATABASE_URL, reason="DATABASE_URL not set")
-def test_live_prediction_round_trip(monkeypatch):
-    monkeypatch.setenv("DATABASE_URL", REAL_DATABASE_URL)
-    db.init_db()
+@live
+def test_live_analysis_is_stored_then_cached_then_followed_up(test_db, groq_budget):
+    r = client.post("/analyze", json={"query": "gold 1D"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    a = body["analysis"]
+    assert body["status"] == "complete" and body["cached"] is False
+    assert (a["asset"], a["timeframe"]) == ("GC=F", "1D")
+    assert body["answer"].startswith(f"Gold 1D - Bias: {a['bias']}")
+    uuid.UUID(body["session_id"], version=4)                   # a fresh session id was issued
+    [stored] = rows(test_db)
+    assert stored[:4] == ("GC=F", "1D", a["bias"], "agent") and stored[4] > 0
+
+    # same asset + timeframe in other words: answered from the cache, not stored twice
+    again = client.post("/analyze", json={"query": "gold daily please"}).json()
+    assert again["cached"] is True and again["analysis"] == a
+    assert len(rows(test_db)) == 1
+
+    # a question about it in the same session skips the cache and makes no new prediction
+    why = client.post("/analyze", json={"query": "why that bias?", "session_id": body["session_id"]}).json()
+    assert why["status"] == "complete" and why["cached"] is False and why["analysis"] is None
+    assert len(rows(test_db)) == 1
+
+
+@live
+def test_live_question_then_resume_completes_the_analysis(groq_budget):
+    first = client.post("/analyze", json={"query": "what's the bias on solana?"}).json()
+    assert first["status"] == "needs_input" and first["question"]
+    r = client.post("/resume", json={"session_id": first["session_id"], "answer": "1D"})
+    assert r.status_code == 200 and r.json()["status"] == "complete"
+    assert (r.json()["analysis"]["asset"], r.json()["analysis"]["timeframe"]) == ("SOL-USD", "1D")
+
+
+@live
+def test_live_refused_query_has_no_analysis():
+    body = client.post("/analyze", json={"query": "write me a poem"}).json()
+    assert body["status"] == "refused" and body["analysis"] is None
+    assert body["answer"] == graph.REFUSALS["off_topic"]
+
+
+@live
+def test_live_llm_outage_returns_503_with_retry_after(monkeypatch):
+    monkeypatch.setattr(graph, "agent_llm", unreachable_groq("openai/gpt-oss-120b").bind_tools(graph.TOOLS))
+    r = client.post("/analyze", json={"query": "gold 1D"})
+    assert r.status_code == 503 and r.headers["retry-after"] == "60"
+
+
+@live
+def test_live_database_outage_does_not_fail_the_request(monkeypatch, groq_budget):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://finsight:x@127.0.0.1:1/finsight")  # nothing listens there
+    r = client.post("/analyze", json={"query": "ETH 1D"})
+    assert r.status_code == 200 and r.json()["analysis"]["asset"] == "ETH-USD"
+
+
+@live
+def test_live_analyze_rate_limit_returns_429():
+    codes = [client.post("/analyze", json={"query": "write me a poem"}).status_code for _ in range(11)]
+    assert codes[:10] == [200] * 10 and codes[10] == 429
+
+
+@live
+def test_live_health_reports_storage_on(test_db):
+    assert client.get("/health").json()["predictions_storage"] is True
+
+
+@live
+def test_live_prediction_round_trip(test_db):
     row_id = db.save_prediction({
         "asset": "GC=F", "timeframe": "4H", "bias": "Bearish", "score": 46, "bucket": "Medium",
         "net": -0.6, "coverage": 0.95, "evidence": [],
         "price": {"last_price": 4010.4, "atr14": 18.2, "trend": "down"},
     })
-    with psycopg.connect(REAL_DATABASE_URL) as conn:
+    with psycopg.connect(test_db) as conn:
         row = conn.execute("SELECT asset, bias, entry_price, exit_price, resolve_at - created_at "
                            "FROM predictions WHERE id = %s", (row_id,)).fetchone()
-        conn.execute("DELETE FROM predictions WHERE id = %s", (row_id,))
     assert row[:4] == ("GC=F", "Bearish", 4010.4, None)
     assert round(row[4].total_seconds() / 3600) == 4  # graded 4 hours later

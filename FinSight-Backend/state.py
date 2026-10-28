@@ -45,3 +45,4 @@ class AgentState(TypedDict):
     stop_reason: str | None  # why finalize was needed, if a cap stopped the loop
     analysis: dict | None   # this turn's computed bias + score (confidence.Assessment), if any
     cache_hit: dict | None  # a stored answer for this asset + timeframe, if one is fresh
+    follow_up: bool         # a question about the previous answer: answered without tools

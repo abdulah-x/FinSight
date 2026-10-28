@@ -1,23 +1,23 @@
-"""Each tool tested on its own.
+"""Each tool tested on its own, against the real APIs.
 
-Offline tests (default) replace the network with fake data, so we can check the
-maths exactly and simulate outages. Live tests hit the real APIs once per tool.
+Argument validation (the allowlist) is pure code and runs offline. Everything else
+calls the real source and checks the result is present, fresh and internally consistent.
 
-    pytest            # offline, ~2s, no internet needed
-    pytest -m live    # real APIs (uses 1 Tavily credit)
+    pytest -m live tests/test_tools.py    # uses ~2 Tavily credits
 """
 
 import time
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, patch
+from urllib.parse import urlparse
 
 import pandas as pd
 import pytest
-import requests
+from langchain_tavily import TavilySearch
 from pydantic import ValidationError
 
 import tools
 from tools import (
+    _google_news,
     gather_evidence,
     get_crypto_fear_greed,
     get_economic_calendar,
@@ -28,154 +28,20 @@ from tools import (
     search_news,
 )
 
+ASSETS = ["BTC-USD", "ETH-USD", "SOL-USD", "GC=F"]
+CRYPTO = ["BTC-USD", "ETH-USD", "SOL-USD"]
+# newest bar older than this = stale data (gold allows for its weekend close)
+MAX_AGE_HOURS = {"1H": 3, "4H": 9, "1D": 50, "1W": 24 * 9}
+GOLD_EXTRA_HOURS = 72
 
-class FakeResponse:
-    """Stands in for a requests.Response."""
-
-    def __init__(self, json_data=None, status=200, content=b""):
-        self._json, self.status_code, self.content = json_data, status, content
-
-    def raise_for_status(self):
-        if self.status_code >= 400:
-            raise requests.HTTPError(f"{self.status_code} Client Error")
-
-    def json(self):
-        return self._json
+live = pytest.mark.live
 
 
-def rising_bars(n, freq="1h"):
-    """Close goes 100, 101, 102... with High/Low exactly 1 either side."""
-    close = pd.Series(range(100, 100 + n), dtype=float)
-    return pd.DataFrame(
-        {"Open": close - 0.5, "High": close + 1, "Low": close - 1, "Close": close}
-    ).set_index(pd.date_range("2026-01-01", periods=n, freq=freq, tz="UTC"))
-
-
-# ---------- get_price_action ----------
-
-@patch("tools.yf.Ticker")
-def test_price_action_maths_on_known_data(ticker):
-    ticker.return_value.history.return_value = rising_bars(100, "1D")
-    r = get_price_action.invoke({"symbol": "BTC-USD", "timeframe": "1D"})
-    assert r["last_price"] == 199
-    assert r["trend"] == "up"                  # price > EMA20 > EMA50 on a steady rise
-    assert r["ema50"] < r["ema20"] < 199
-    assert r["atr14"] == 2.0                   # every bar is High-Low = 2
-    assert r["high_20_bars"] == 200 and r["low_20_bars"] == 179
-    assert r["change_pct_20_bars"] == round((199 / 179 - 1) * 100, 2)
-
-
-@patch("tools.yf.Ticker")
-def test_price_action_4h_is_built_from_1h_bars(ticker):
-    ticker.return_value.history.return_value = rising_bars(400, "1h")
-    r = get_price_action.invoke({"symbol": "GC=F", "timeframe": "4H"})
-    ticker.return_value.history.assert_called_with(period="60d", interval="1h")
-    assert r["last_price"] == 499 and r["trend"] == "up"
-    assert r["atr14"] == 5.0                   # 4 one-hour bars of +1 -> a 4H bar spans 5
-
-
-@patch("tools.yf.Ticker")
-def test_price_action_falling_market_is_down(ticker):
-    bars = rising_bars(100, "1D")
-    bars[["Open", "High", "Low", "Close"]] = bars[["Open", "High", "Low", "Close"]].iloc[::-1].values
-    ticker.return_value.history.return_value = bars
-    assert get_price_action.invoke({"symbol": "ETH-USD", "timeframe": "1D"})["trend"] == "down"
-
-
-@patch("tools.yf.Ticker")
-def test_price_action_too_few_bars_is_an_error(ticker):
-    ticker.return_value.history.return_value = rising_bars(30, "1D")
-    assert "not enough" in get_price_action.invoke({"symbol": "BTC-USD", "timeframe": "1D"})["error"]
-
-
-@patch("tools.yf.Ticker", side_effect=ConnectionError("yahoo down"))
-def test_price_action_outage_is_an_error_not_a_crash(_):
-    assert "yahoo down" in get_price_action.invoke({"symbol": "BTC-USD", "timeframe": "1D"})["error"]
-
+# ---------- the allowlist: rejected before any network call ----------
 
 def test_price_action_rejects_unlisted_symbol():
     with pytest.raises(ValidationError):
         get_price_action.invoke({"symbol": "DOGE-USD", "timeframe": "1D"})
-
-
-# ---------- get_macro_snapshot ----------
-
-def fake_macro_closes():
-    days = pd.date_range("2026-01-01", periods=10, freq="D")
-    data = {
-        ("Close", "DX-Y.NYB"): [100 + i for i in range(10)],
-        ("Close", "^TNX"): [4.00 + 0.01 * i for i in range(10)],
-        ("Close", "^VIX"): [20.0] * 10,
-        ("Close", "^GSPC"): [5000.0] * 9 + [float("nan")],  # stock market not open yet today
-    }
-    return pd.DataFrame(data, index=days)
-
-
-@patch("tools.yf.download", return_value=fake_macro_closes())
-def test_macro_changes_and_units(_):
-    r = get_macro_snapshot.invoke({})
-    assert r["dollar_index"]["change_1d"] == round((109 / 108 - 1) * 100, 2)
-    assert r["us10y_yield"]["change_1d"] == 1.0    # 4.08 -> 4.09 = +1 basis point
-    assert r["us10y_yield"]["change_5d"] == 5.0
-    assert r["vix"]["change_5d"] == 0.0
-
-
-@patch("tools.yf.download", return_value=fake_macro_closes())
-def test_macro_each_market_keeps_its_own_last_day(_):
-    r = get_macro_snapshot.invoke({})
-    assert r["dollar_index"]["as_of"] == "2026-01-10"
-    assert r["sp500"]["as_of"] == "2026-01-09"     # the NaN day is skipped, not reported as 0
-
-
-@patch("tools.yf.download", side_effect=ConnectionError("yahoo down"))
-def test_macro_outage_is_an_error(_):
-    assert "error" in get_macro_snapshot.invoke({})
-
-
-# ---------- get_economic_calendar ----------
-
-def event(hours_from_now, country="USD", impact="High", title="CPI"):
-    when = datetime.now(timezone.utc) + timedelta(hours=hours_from_now)
-    return {"title": title, "country": country, "impact": impact, "date": when.isoformat(),
-            "forecast": "0.3%", "previous": ""}
-
-
-@patch("tools.requests.get")
-def test_calendar_keeps_only_usd_medium_high_inside_window(get):
-    get.return_value = FakeResponse([
-        event(2, title="keep: USD high"),
-        event(3, impact="Medium", title="keep: USD medium"),
-        event(2, country="EUR", title="drop: not USD"),
-        event(2, impact="Low", title="drop: low impact"),
-        event(-2, title="drop: already happened"),
-        event(30, title="drop: outside 24h window"),
-    ])
-    r = get_economic_calendar.invoke({"hours_ahead": 24})
-    assert [e["event"] for e in r["events"]] == ["keep: USD high", "keep: USD medium"]
-    assert r["high_impact_count"] == 1
-    assert r["events"][0]["previous"] is None       # empty string from the feed -> None
-
-
-@patch("tools.requests.get")
-def test_calendar_reuses_download_for_30_minutes(get):
-    get.return_value = FakeResponse([event(2)])
-    get_economic_calendar.invoke({"hours_ahead": 24})
-    get_economic_calendar.invoke({"hours_ahead": 48})
-    assert get.call_count == 1
-
-
-@patch("tools.requests.get")
-def test_calendar_downloads_again_after_cache_expires(get):
-    get.return_value = FakeResponse([event(2)])
-    get_economic_calendar.invoke({"hours_ahead": 24})
-    tools._calendar_cache["fetched_at"] -= timedelta(minutes=31)
-    get_economic_calendar.invoke({"hours_ahead": 24})
-    assert get.call_count == 2
-
-
-@patch("tools.requests.get", return_value=FakeResponse(status=429))
-def test_calendar_rate_limit_is_an_error(_):
-    assert "429" in get_economic_calendar.invoke({"hours_ahead": 24})["error"]
 
 
 @pytest.mark.parametrize("hours", [0, 169, 500])
@@ -184,209 +50,14 @@ def test_calendar_rejects_out_of_range_window(hours):
         get_economic_calendar.invoke({"hours_ahead": hours})
 
 
-# ---------- get_crypto_fear_greed ----------
-
-@patch("tools.requests.get")
-def test_fear_greed_today_yesterday_average(get):
-    values = [20, 30, 40, 50, 60, 70, 80]  # newest first
-    get.return_value = FakeResponse({"data": [
-        {"value": str(v), "value_classification": "Extreme Fear" if v == 20 else "x"} for v in values
-    ]})
-    r = get_crypto_fear_greed.invoke({})
-    assert r == {"today": 20, "classification": "Extreme Fear", "yesterday": 30, "avg_7d": 50.0}
-
-
-@patch("tools.requests.get", return_value=FakeResponse({"unexpected": "shape"}))
-def test_fear_greed_bad_payload_is_an_error(_):
-    assert "error" in get_crypto_fear_greed.invoke({})
-
-
-# ---------- get_funding_rate ----------
-
-@patch("tools.requests.get")
-def test_funding_rate_converts_symbol_and_units(get):
-    get.return_value = FakeResponse([{"fundingRate": "0.0001"}] * 8 + [{"fundingRate": "0.0005"}])
-    r = get_funding_rate.invoke({"symbol": "BTC-USD"})
-    assert get.call_args.kwargs["params"]["symbol"] == "BTCUSDT"
-    assert r["latest_pct_8h"] == 0.05                     # 0.0005 -> 0.05%
-    assert r["avg_3d_pct_8h"] == round((0.01 * 8 + 0.05) / 9, 4)
-    assert r["latest_annualised_pct"] == 54.8             # 0.05% x 3 a day x 365
-
-
-@patch("tools.requests.get", return_value=FakeResponse(status=451))
-def test_funding_rate_geo_block_is_an_error(_):
-    assert "451" in get_funding_rate.invoke({"symbol": "ETH-USD"})["error"]
-
-
 def test_funding_rate_rejects_gold():
     with pytest.raises(ValidationError):
         get_funding_rate.invoke({"symbol": "GC=F"})
 
 
-# ---------- search_news ----------
-
-RSS = b"""<?xml version="1.0"?><rss><channel>
-<item><title>Gold steady before Fed</title><source>Reuters</source>
-<pubDate>Tue, 27 Oct 2026 05:00:00 GMT</pubDate><link>https://news.google.com/very/long</link></item>
-</channel></rss>"""
-
-
-@patch("tools.tavily_search")
-def test_news_uses_tavily_first(tavily):
-    tavily.invoke.return_value = {"results": [{
-        "title": "BTC slips", "url": "https://www.coindesk.com/a", "published_date": "today",
-        "content": "Bitcoin   fell\n\n  overnight " + "x" * 500,
-    }]}
-    r = search_news.invoke({"query": "bitcoin", "time_range": "week"})
-    assert r["provider"] == "tavily"
-    assert tavily.invoke.call_args.args[0] == {"query": "bitcoin", "topic": "news", "time_range": "week"}
-    article = r["articles"][0]
-    assert article["source"] == "www.coindesk.com"
-    assert article["snippet"].startswith("Bitcoin fell overnight") and len(article["snippet"]) == 200
-
-
-@patch("tools.requests.get", return_value=FakeResponse(content=RSS))
-@patch("tools.tavily_search")
-def test_news_falls_back_to_google_when_tavily_fails(tavily, get):
-    tavily.invoke.side_effect = RuntimeError("credits exhausted")
-    r = search_news.invoke({"query": "gold"})
-    assert r["provider"] == "google_news_rss"
-    assert r["articles"] == [{"title": "Gold steady before Fed", "source": "Reuters",
-                              "published": "Tue, 27 Oct 2026 05:00:00 GMT", "snippet": None, "url": None}]
-    assert get.call_args.kwargs["params"]["q"] == "gold when:1d"
-
-
-@patch("tools.requests.get", return_value=FakeResponse(content=RSS))
-@patch("tools.tavily_search")
-def test_news_falls_back_when_tavily_finds_nothing(tavily, _):
-    tavily.invoke.return_value = {"results": []}
-    assert search_news.invoke({"query": "gold"})["provider"] == "google_news_rss"
-
-
-@patch("tools.requests.get", side_effect=ConnectionError("no internet"))
-@patch("tools.tavily_search")
-def test_news_both_sources_down_is_one_error(tavily, _):
-    tavily.invoke.side_effect = RuntimeError("credits exhausted")
-    error = search_news.invoke({"query": "gold"})["error"]
-    assert "credits exhausted" in error and "no internet" in error
-
-
 def test_news_rejects_long_query():
     with pytest.raises(ValidationError):
         search_news.invoke({"query": "x" * 101})
-
-
-# ---------- get_social_sentiment ----------
-
-def post(body, tag=None):
-    return {"body": body, "entities": {"sentiment": {"basic": tag} if tag else None}}
-
-
-@patch("tools.requests.get")
-def test_social_tally_and_clean_samples(get):
-    get.return_value = FakeResponse({"messages": [
-        post("it&#39;s   going up", "Bullish"), post("moon", "Bullish"),
-        post("dump incoming", "Bearish"), post("just watching"),
-    ]})
-    r = get_social_sentiment.invoke({"symbol": "BTC-USD"})
-    assert (r["posts"], r["bullish"], r["bearish"], r["untagged"]) == (4, 2, 1, 1)
-    assert r["samples"][0] == "it's going up"                # HTML code decoded, spaces collapsed
-
-
-@patch("tools.requests.get", return_value=FakeResponse({"messages": []}))
-def test_social_gold_maps_to_xauusd(get):
-    get_social_sentiment.invoke({"symbol": "GC=F"})
-    assert get.call_args.args[0].endswith("/XAUUSD.json")
-
-
-@patch("tools.requests.get", return_value=FakeResponse(status=403))
-def test_social_blocked_is_an_error_not_an_empty_list(_):
-    assert "403" in get_social_sentiment.invoke({"symbol": "BTC-USD"})["error"]
-
-
-# ---------- gather_evidence ----------
-
-def fake_source(name, result=None, raises=None, sleep=0):
-    """A stand-in tool that records its args and returns `result` (default: its own name)."""
-    def invoke(args):
-        time.sleep(sleep)
-        if raises:
-            raise raises
-        fake.calls.append(args)
-        return result or {"from": name}
-    fake = MagicMock()
-    fake.name, fake.calls, fake.invoke.side_effect = name, [], invoke
-    return fake
-
-
-@pytest.fixture
-def sources():
-    """Replace all 7 underlying tools with fakes, so gather_evidence never touches the network."""
-    names = ["get_price_action", "get_macro_snapshot", "get_economic_calendar", "get_crypto_fear_greed",
-             "get_funding_rate", "search_news", "get_social_sentiment"]
-    fakes = {n: fake_source(n) for n in names}
-    with patch.multiple("tools", **fakes):
-        yield fakes
-
-
-def gather(**args):
-    return gather_evidence.invoke({"symbol": "BTC-USD", "timeframe": "1H", **args})
-
-
-def test_gather_runs_only_the_requested_sources(sources):
-    r = gather(sources=["price_action", "funding"])
-    assert list(r) == ["price_action", "funding"]
-    assert sources["get_price_action"].calls == [{"symbol": "BTC-USD", "timeframe": "1H"}]
-    assert sources["get_funding_rate"].calls == [{"symbol": "BTC-USD"}]
-    assert sources["get_macro_snapshot"].calls == []  # not asked for, not fetched
-
-
-def test_gather_crypto_only_sources_are_refused_for_gold(sources):
-    r = gather_evidence.invoke({"symbol": "GC=F", "timeframe": "1D", "sources": ["funding", "fear_greed", "macro"]})
-    assert "crypto only" in r["funding"]["error"] and "crypto only" in r["fear_greed"]["error"]
-    assert sources["get_funding_rate"].calls == []        # never even called
-    assert r["macro"] == {"from": "get_macro_snapshot"}   # the rest still runs
-
-
-def test_gather_news_defaults_to_asset_name_and_matches_timeframe(sources):
-    gather(sources=["news"])
-    gather_evidence.invoke({"symbol": "GC=F", "timeframe": "1W", "sources": ["news"]})
-    assert sources["search_news"].calls == [{"query": "bitcoin", "time_range": "day"},
-                                            {"query": "gold price", "time_range": "week"}]
-
-
-def test_gather_passes_news_query_and_calendar_window(sources):
-    gather(sources=["news", "calendar"], news_query="bitcoin ETF flows", calendar_hours=4)
-    assert sources["search_news"].calls[0]["query"] == "bitcoin ETF flows"
-    assert sources["get_economic_calendar"].calls == [{"hours_ahead": 4}]
-
-
-def test_gather_runs_sources_in_parallel(sources):
-    for name in ["get_price_action", "get_macro_snapshot", "get_economic_calendar", "search_news"]:
-        sources[name].invoke.side_effect = lambda args: time.sleep(0.5) or {"ok": True}
-    start = time.time()
-    gather(sources=["price_action", "macro", "calendar", "news"])
-    assert time.time() - start < 1.2  # one after another would take 2s
-
-
-def test_gather_one_failing_source_does_not_spoil_the_others(sources):
-    sources["get_price_action"].invoke.side_effect = RuntimeError("boom")
-    r = gather(sources=["price_action", "fear_greed"])
-    assert "boom" in r["price_action"]["error"]
-    assert r["fear_greed"] == {"from": "get_crypto_fear_greed"}
-
-
-def test_gather_slow_source_times_out_alone(sources):
-    sources["get_macro_snapshot"].invoke.side_effect = lambda args: time.sleep(2) or {"late": True}
-    with patch.object(tools, "SOURCE_TIMEOUT_SECONDS", 0.2):
-        r = gather(sources=["macro", "fear_greed"])
-    assert "timed out" in r["macro"]["error"]
-    assert r["fear_greed"] == {"from": "get_crypto_fear_greed"}
-
-
-def test_gather_duplicate_sources_are_fetched_once(sources):
-    r = gather(sources=["fear_greed", "fear_greed"])
-    assert list(r) == ["fear_greed"] and len(sources["get_crypto_fear_greed"].calls) == 1
 
 
 @pytest.mark.parametrize("bad", [
@@ -397,24 +68,165 @@ def test_gather_duplicate_sources_are_fetched_once(sources):
 ])
 def test_gather_rejects_bad_arguments(bad):
     with pytest.raises(ValidationError):
-        gather(**bad)
+        gather_evidence.invoke({"symbol": "BTC-USD", "timeframe": "1H", **bad})
 
-# ---------- live: each real API, one at a time ----------
 
-@pytest.mark.live
-@pytest.mark.parametrize("tool, args, expected_key", [
-    (get_price_action, {"symbol": "BTC-USD", "timeframe": "1H"}, "trend"),
-    (get_price_action, {"symbol": "GC=F", "timeframe": "4H"}, "trend"),
-    (get_macro_snapshot, {}, "dollar_index"),
-    (get_economic_calendar, {"hours_ahead": 168}, "events"),
-    (get_crypto_fear_greed, {}, "today"),
-    (get_funding_rate, {"symbol": "SOL-USD"}, "latest_pct_8h"),
-    (search_news, {"query": "bitcoin"}, "articles"),
-    (get_social_sentiment, {"symbol": "ETH-USD"}, "posts"),
-    (gather_evidence, {"symbol": "BTC-USD", "timeframe": "4H", "sources": ["price_action", "fear_greed", "funding"]}, "funding"),
-], ids=["price BTC 1H", "price gold 4H", "macro", "calendar", "fear_greed",
-        "funding SOL", "news", "social ETH", "gather BTC 4H"])
-def test_live(tool, args, expected_key):
-    result = tool.invoke(args)
-    assert "error" not in result, result["error"]
-    assert expected_key in result
+def test_gather_refuses_crypto_only_sources_for_gold_without_fetching():
+    r = gather_evidence.invoke({"symbol": "GC=F", "timeframe": "1D", "sources": ["funding", "fear_greed"]})
+    assert "crypto only" in r["funding"]["error"] and "crypto only" in r["fear_greed"]["error"]
+
+
+# ---------- get_price_action (Yahoo) ----------
+
+@live
+@pytest.mark.parametrize("timeframe", ["1H", "4H", "1D", "1W"])
+@pytest.mark.parametrize("symbol", ASSETS)
+def test_live_price_action_is_fresh_and_consistent(symbol, timeframe):
+    r = get_price_action.invoke({"symbol": symbol, "timeframe": timeframe})
+    assert "error" not in r, r["error"]
+    assert (r["symbol"], r["timeframe"]) == (symbol, timeframe)
+    assert r["atr14"] > 0
+    assert r["low_20_bars"] <= r["last_price"] <= r["high_20_bars"]
+    # the trend label follows from the EMAs it reports
+    expected = ("up" if r["last_price"] > r["ema20"] > r["ema50"]
+                else "down" if r["last_price"] < r["ema20"] < r["ema50"] else "mixed")
+    assert r["trend"] == expected
+
+    as_of = pd.Timestamp(r["as_of"])
+    age = (datetime.now(timezone.utc) - as_of.tz_convert("UTC")).total_seconds() / 3600
+    assert age <= MAX_AGE_HOURS[timeframe] + (GOLD_EXTRA_HOURS if symbol == "GC=F" else 0), f"{age:.1f}h old"
+    if timeframe == "4H":
+        assert as_of.hour % 4 == 0  # built from 1h bars into 4-hour blocks
+
+
+# ---------- get_macro_snapshot (Yahoo) ----------
+
+PLAUSIBLE = {"dollar_index": (70, 150), "us10y_yield": (0.5, 10), "vix": (5, 100), "sp500": (1000, 20000)}
+
+
+@live
+def test_live_macro_values_units_and_dates():
+    r = get_macro_snapshot.invoke({})
+    assert "error" not in r, r.get("error")
+    for name, (low, high) in PLAUSIBLE.items():
+        item = r[name]
+        assert "error" not in item, (name, item)
+        assert low <= item["last"] <= high, (name, item)
+        assert (datetime.now(timezone.utc).date() - datetime.fromisoformat(item["as_of"]).date()).days <= 5
+    assert abs(r["us10y_yield"]["change_1d"]) < 50   # basis points: a day's move is rarely >30bp
+    assert abs(r["dollar_index"]["change_1d"]) < 3   # percent
+
+
+# ---------- get_economic_calendar (Forex Factory) ----------
+
+@live
+def test_live_calendar_window_and_impact():
+    week = get_economic_calendar.invoke({"hours_ahead": 168})
+    day = get_economic_calendar.invoke({"hours_ahead": 24})
+    assert "error" not in week, week["error"]
+    for e in week["events"]:
+        assert e["impact"] in ("High", "Medium") and 0 <= e["hours_away"] <= 168
+    assert week["high_impact_count"] == sum(e["impact"] == "High" for e in week["events"])
+    assert all(e["hours_away"] <= 24 for e in day["events"])
+    assert {e["event"] for e in day["events"]} <= {e["event"] for e in week["events"]}
+
+
+@live
+def test_live_calendar_download_is_reused_for_30_minutes():
+    get_economic_calendar.invoke({"hours_ahead": 24})
+    first = tools._calendar_cache["fetched_at"]
+    get_economic_calendar.invoke({"hours_ahead": 48})
+    assert tools._calendar_cache["fetched_at"] == first      # no second download
+
+    tools._calendar_cache["fetched_at"] = first - timedelta(minutes=31)
+    r = get_economic_calendar.invoke({"hours_ahead": 24})
+    assert "error" not in r, r["error"]
+    assert tools._calendar_cache["fetched_at"] > first        # expired: downloaded again
+
+
+# ---------- get_crypto_fear_greed (alternative.me) ----------
+
+@live
+def test_live_fear_greed():
+    r = get_crypto_fear_greed.invoke({})
+    assert "error" not in r, r["error"]
+    assert 0 <= r["today"] <= 100 and 0 <= r["yesterday"] <= 100 and 0 <= r["avg_7d"] <= 100
+    assert r["classification"] in {"Extreme Fear", "Fear", "Neutral", "Greed", "Extreme Greed"}
+
+
+# ---------- get_funding_rate (Binance) ----------
+
+@live
+@pytest.mark.parametrize("symbol", CRYPTO)
+def test_live_funding_rate_units(symbol):
+    r = get_funding_rate.invoke({"symbol": symbol})
+    assert "error" not in r, r["error"]
+    assert abs(r["latest_pct_8h"]) < 1                        # in %, so 0.01 is normal
+    assert abs(r["latest_annualised_pct"] - r["latest_pct_8h"] * 3 * 365) < 0.2
+
+
+# ---------- search_news (Tavily, Google News backup) ----------
+
+@live
+def test_live_news_from_tavily_is_compact():
+    r = search_news.invoke({"query": "bitcoin", "time_range": "day"})
+    assert r.get("provider") == "tavily", r
+    assert 1 <= len(r["articles"]) <= 5
+    for a in r["articles"]:
+        assert a["title"] and a["source"] == urlparse(a["url"]).netloc
+        assert a["snippet"] is None or (len(a["snippet"]) <= 200 and "  " not in a["snippet"] and "\n" not in a["snippet"])
+
+
+@live
+def test_live_news_falls_back_to_google_when_tavily_rejects_the_key(monkeypatch):
+    monkeypatch.setattr(tools, "tavily_search", TavilySearch(max_results=5, tavily_api_key="tvly-invalid-key"))
+    r = search_news.invoke({"query": "gold price", "time_range": "week"})
+    assert r.get("provider") == "google_news_rss", r
+    assert r["articles"] and all(a["title"] and a["url"] is None and a["snippet"] is None for a in r["articles"])
+
+
+@live
+def test_live_google_news_feed():
+    articles = _google_news("gold price", "day")
+    assert 1 <= len(articles) <= 5 and all(a["title"] and a["source"] for a in articles)
+
+
+# ---------- get_social_sentiment (StockTwits) ----------
+
+@live
+@pytest.mark.parametrize("symbol", ASSETS)
+def test_live_social_tally_adds_up(symbol):
+    r = get_social_sentiment.invoke({"symbol": symbol})   # GC=F is looked up as XAUUSD
+    assert "error" not in r, r["error"]
+    assert r["symbol"] == symbol and r["posts"] > 0
+    assert r["bullish"] + r["bearish"] + r["untagged"] == r["posts"]
+    assert len(r["samples"]) <= 5
+    for s in filter(None, r["samples"]):
+        assert len(s) <= 150 and "&#39;" not in s and "&amp;" not in s and "\n" not in s
+
+
+# ---------- gather_evidence ----------
+
+@live
+def test_live_gather_fetches_exactly_the_requested_sources():
+    r = gather_evidence.invoke({"symbol": "BTC-USD", "timeframe": "4H",
+                                "sources": ["price_action", "funding", "fear_greed", "funding"]})
+    assert list(r) == ["price_action", "funding", "fear_greed"]   # duplicate fetched once
+    assert all("error" not in v for v in r.values()), r
+    assert r["price_action"]["timeframe"] == "4H" and r["funding"]["symbol"] == "BTC-USD"
+
+
+@live
+def test_live_gather_gold_runs_the_rest_when_crypto_sources_are_refused():
+    r = gather_evidence.invoke({"symbol": "GC=F", "timeframe": "1D", "sources": ["funding", "macro"]})
+    assert "crypto only" in r["funding"]["error"]
+    assert "dollar_index" in r["macro"]
+
+
+@live
+def test_live_gather_slow_sources_time_out_without_blocking(monkeypatch):
+    monkeypatch.setattr(tools, "SOURCE_TIMEOUT_SECONDS", 0.001)  # no real request is this fast
+    start = time.time()
+    r = gather_evidence.invoke({"symbol": "BTC-USD", "timeframe": "1D", "sources": ["macro", "fear_greed"]})
+    assert "timed out" in r["macro"]["error"] and "timed out" in r["fear_greed"]["error"]
+    assert time.time() - start < 1

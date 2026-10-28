@@ -159,7 +159,7 @@ def guardrail(state: AgentState) -> dict:
     """Fixed security check on every new message, before the agent spends any tokens.
     Also starts a fresh turn: the caps' counters reset here."""
     turn = {"tool_rounds": 0, "started_at": time.time(), "seen_calls": [], "stop_reason": None,
-            "analysis": None, "cache_hit": None}
+            "analysis": None, "cache_hit": None, "follow_up": False}
     query = state["messages"][-1].content
     if len(query) > MAX_QUERY_CHARS:
         return {**turn, "guardrail_result": "too_long"}
@@ -171,8 +171,11 @@ def guardrail(state: AgentState) -> dict:
     asset = decision.asset or state.get("asset")
     timeframe = decision.timeframe or state.get("timeframe")
     fresh_request = decision.category == "ok" and decision.new_analysis and asset and timeframe
+    # "why?" after an answer: explain that answer. Live tests caught the agent re-gathering
+    # evidence for it (a new score, ~4K tokens), so on these turns it gets no tools at all.
+    follow_up = not decision.new_analysis and any(isinstance(m, AIMessage) for m in state["messages"])
     return {**turn, "guardrail_result": decision.category, "asset": asset, "timeframe": timeframe,
-            "cache_hit": cache.get(asset, timeframe) if fresh_request else None}
+            "cache_hit": cache.get(asset, timeframe) if fresh_request else None, "follow_up": follow_up}
 
 
 def serve_cached(state: AgentState) -> dict:
@@ -196,8 +199,12 @@ def agent(state: AgentState) -> dict:
            if timeframe else "Timeframe: unknown.")
         + f"\nTool rounds left: {rounds_left}. Request everything you still need in this turn."
     )
+    model = agent_llm
+    if state.get("follow_up"):
+        model = llm  # no tools bound: it can only answer from the conversation
+        context += "\nThe trader is asking about your previous answer: explain it from the conversation (no READY)."
     try:
-        response = agent_llm.invoke([SystemMessage(SYSTEM_PROMPT + context)] + _for_llm(state["messages"]))
+        response = model.invoke([SystemMessage(SYSTEM_PROMPT + context)] + _for_llm(state["messages"]))
     except Exception as e:  # timeout / rate limit / provider down: answer politely, don't crash
         return {"messages": [AIMessage(content=LLM_BUSY)], "stop_reason": f"LLM unavailable ({type(e).__name__})"}
     return {"messages": [response]}

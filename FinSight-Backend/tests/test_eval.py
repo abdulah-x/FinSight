@@ -1,22 +1,28 @@
-"""Stage 7 forward test: resolver, collector and calibration report (no network, no real DB)."""
+"""Stage 7 forward test: resolver, collector, calibration report and scheduler.
+
+The grading rule, market hours and report maths are pure code and run offline. The
+resolver and collector run live: real Yahoo prices, real evidence, and a real Postgres
+(the separate finsight_test database).
+
+    pytest -m live tests/test_eval.py
+"""
 
 import os
 import sys
-from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from datetime import datetime, timedelta, timezone
 
-import pandas as pd
+import psycopg
 import pytest
+import yfinance as yf
+from conftest import rows
 
 import collector
+import db
 import main
 import resolver
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "eval"))
 import calibration_report  # noqa: E402
-
-T0 = datetime(2026, 10, 28, 8, 15, tzinfo=timezone.utc)
-
 
 # ---------- resolver: grading rule ----------
 
@@ -32,55 +38,6 @@ def test_grade_needs_a_move_beyond_a_quarter_atr(bias, exit_, correct):
     assert resolver.grade(bias, entry=100.0, exit_=exit_, atr=10.0) is correct
 
 
-# ---------- resolver: exit price lookup ----------
-
-def hourly(start, opens):
-    index = pd.date_range(start, periods=len(opens), freq="1h", tz="UTC")
-    return pd.DataFrame({"Open": opens}, index=index)
-
-
-@patch("resolver.yf.Ticker")
-def test_exit_price_is_the_open_of_the_first_bar_at_or_after_the_check_time(ticker):
-    ticker.return_value.history.return_value = hourly("2026-10-28 07:00", [10.0, 11.0, 12.0])
-    prices = resolver.exit_prices("BTC-USD", [T0])  # 08:15 -> first bar at/after is 09:00
-    assert prices == {T0: 12.0}
-
-
-@patch("resolver.yf.Ticker")
-def test_check_time_with_no_bar_yet_is_left_for_the_next_run(ticker):
-    ticker.return_value.history.return_value = hourly("2026-10-28 06:00", [10.0, 11.0])  # ends 07:00
-    assert resolver.exit_prices("GC=F", [T0]) == {}
-
-
-def test_resolve_due_grades_and_records_each_prediction():
-    due = [{"id": 1, "asset": "BTC-USD", "bias": "Bullish", "entry_price": 100.0, "atr": 10.0, "resolve_at": T0},
-           {"id": 2, "asset": "GC=F", "bias": "Bearish", "entry_price": 100.0, "atr": 10.0, "resolve_at": T0}]
-    record = MagicMock()
-    with patch.object(resolver.db, "due_predictions", return_value=due), \
-            patch.object(resolver.db, "record_outcome", record), \
-            patch.object(resolver, "exit_prices", side_effect=lambda symbol, times: {T0: 110.0}):
-        assert resolver.resolve_due() == 2
-    record.assert_any_call(1, 110.0, True)    # bullish, price up 10
-    record.assert_any_call(2, 110.0, False)   # bearish, price up 10
-
-
-def test_one_failing_asset_does_not_stop_the_others():
-    due = [{"id": 1, "asset": "BTC-USD", "bias": "Bullish", "entry_price": 100.0, "atr": 10.0, "resolve_at": T0},
-           {"id": 2, "asset": "GC=F", "bias": "Bullish", "entry_price": 100.0, "atr": 10.0, "resolve_at": T0}]
-
-    def prices(symbol, times):
-        if symbol == "GC=F":
-            raise ConnectionError("yahoo down")
-        return {T0: 110.0}
-
-    record = MagicMock()
-    with patch.object(resolver.db, "due_predictions", return_value=due), \
-            patch.object(resolver.db, "record_outcome", record), \
-            patch.object(resolver, "exit_prices", side_effect=prices):
-        assert resolver.resolve_due() == 1
-    record.assert_called_once_with(1, 110.0, True)
-
-
 # ---------- collector ----------
 
 @pytest.mark.parametrize("when, open_", [
@@ -93,37 +50,6 @@ def test_one_failing_asset_does_not_stop_the_others():
 ])
 def test_gold_market_hours(when, open_):
     assert collector.gold_market_open(datetime.fromisoformat(when)) is open_
-
-
-def test_collect_skips_gold_while_its_market_is_shut_and_survives_failures():
-    calls = []
-
-    def one(symbol, timeframe):
-        calls.append(symbol)
-        if symbol == "ETH-USD":
-            raise RuntimeError("binance down")
-        return 1
-
-    with patch.object(collector, "collect_one", side_effect=one), \
-            patch.object(collector, "gold_market_open", return_value=False), \
-            patch.object(collector, "PAUSE_SECONDS", 0):
-        stored = collector.collect(["1H"])
-    assert calls == ["BTC-USD", "ETH-USD", "SOL-USD"]  # no GC=F
-    assert stored == 2                                 # ETH failed, the rest were stored
-
-
-def test_collect_one_stores_the_engine_result_as_a_collector_prediction():
-    evidence = {"price_action": {"trend": "down", "last_price": 900.0, "ema20": 950.0, "ema50": 1000.0,
-                                 "atr14": 10.0, "change_pct_20_bars": -5.0},
-                "calendar": {"events": []}}
-    save = MagicMock(return_value=7)
-    with patch.object(collector, "gather_evidence", MagicMock(**{"invoke.return_value": evidence})), \
-            patch.object(collector, "_google_news", side_effect=ConnectionError("rss down")), \
-            patch.object(collector.db, "save_prediction", save):
-        assert collector.collect_one("BTC-USD", "4H") == 7
-    analysis, = save.call_args.args
-    assert save.call_args.kwargs == {"source": "collector"}
-    assert analysis["bias"] == "Bearish" and analysis["price"]["last_price"] == 900.0
 
 
 # ---------- calibration report ----------
@@ -170,8 +96,8 @@ def test_empty_report():
 ])
 def test_scheduler_jobs(monkeypatch, collector_on, jobs):
     monkeypatch.setenv("COLLECTOR_ENABLED", collector_on)
-    with patch.object(main.db, "enabled", return_value=True):
-        scheduler = main.start_scheduler()
+    monkeypatch.setenv("DATABASE_URL", "postgresql://storage-configured")  # jobs are only created, never run
+    scheduler = main.start_scheduler()
     try:
         assert {job.id for job in scheduler.get_jobs()} == jobs
         # a job that wakes a few seconds late must still run, not be skipped
@@ -181,5 +107,66 @@ def test_scheduler_jobs(monkeypatch, collector_on, jobs):
 
 
 def test_no_scheduler_without_storage():
-    with patch.object(main.db, "enabled", return_value=False):
-        assert main.start_scheduler() is None
+    assert main.start_scheduler() is None  # conftest leaves DATABASE_URL empty
+
+
+# ---------- live: resolver ----------
+
+live = pytest.mark.live
+
+
+@live
+def test_live_exit_price_is_the_open_of_the_first_hourly_bar_after_the_check_time():
+    check = (datetime.now(timezone.utc) - timedelta(hours=3)).replace(minute=15, second=0, microsecond=0)
+    bars = yf.Ticker("BTC-USD").history(period="2d", interval="1h")
+    next_hour = check.replace(minute=0) + timedelta(hours=1)
+    expected = float(bars["Open"][bars.index.tz_convert("UTC") == next_hour].iloc[0])
+    assert resolver.exit_prices("BTC-USD", [check]) == {check: expected}
+
+
+@live
+def test_live_check_time_with_no_bar_yet_is_left_for_the_next_run():
+    later = datetime.now(timezone.utc) + timedelta(hours=2)
+    assert resolver.exit_prices("BTC-USD", [later]) == {}
+
+
+def _prediction(asset, bias, entry, atr):
+    return {"asset": asset, "timeframe": "1H", "bias": bias, "score": 50, "bucket": "Medium", "net": 0.5,
+            "coverage": 1.0, "evidence": [], "price": {"last_price": entry, "atr14": atr, "trend": "up"}}
+
+
+@live
+def test_live_resolver_grades_due_predictions_and_skips_unpriceable_ones(test_db):
+    btc = yf.Ticker("BTC-USD").history(period="1d", interval="1h")["Close"].iloc[-1]
+    eth = yf.Ticker("ETH-USD").history(period="1d", interval="1h")["Close"].iloc[-1]
+    db.save_prediction(_prediction("BTC-USD", "Bullish", float(btc), float(btc) * 0.01))
+    db.save_prediction(_prediction("ETH-USD", "Neutral", float(eth), float(eth) * 0.01))
+    db.save_prediction(_prediction("NOPE-USD", "Bearish", 100.0, 1.0))   # Yahoo has no prices for it
+    with psycopg.connect(test_db) as conn:
+        conn.execute("UPDATE predictions SET resolve_at = now() - interval '3 hours'")  # all due
+
+    assert resolver.resolve_due() == 2
+    for asset, _, bias, _, entry, exit_, correct in rows(test_db, "asset <> 'NOPE-USD'"):
+        assert exit_ > 0 and correct is resolver.grade(bias, entry, exit_, entry * 0.01)
+    [(*_, exit_, correct)] = rows(test_db, "asset = 'NOPE-USD'")
+    assert (exit_, correct) == (None, None)    # left for the next run, didn't stop the others
+
+
+# ---------- live: collector ----------
+
+@live
+def test_live_collect_one_stores_the_engine_result_as_a_collector_prediction(test_db):
+    row_id = collector.collect_one("BTC-USD", "4H")
+    assert row_id is not None
+    [(asset, timeframe, bias, source, entry, exit_, _)] = rows(test_db)
+    assert (asset, timeframe, source, exit_) == ("BTC-USD", "4H", "collector", None)
+    assert bias in ("Bullish", "Bearish", "Neutral") and entry > 0
+
+
+@live
+def test_live_collect_covers_every_asset_and_skips_gold_when_its_market_is_shut(test_db):
+    gold_open = collector.gold_market_open(datetime.now(timezone.utc))
+    stored = collector.collect(["1D"])
+    expected = {"BTC-USD", "ETH-USD", "SOL-USD"} | ({"GC=F"} if gold_open else set())
+    assert stored == len(expected)
+    assert {r[0] for r in rows(test_db)} == expected
