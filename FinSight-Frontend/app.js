@@ -94,11 +94,10 @@ function blocks(paragraphs) {
 }
 
 // ---------- run log ----------
-let timer = null;
 function renderSteps(steps, seconds) {
   $("steps").replaceChildren(...steps.map((s) => {
     const li = h("li", { class: `st ${s.status}` }, h("span", { class: "dot", "aria-hidden": "true" }),
-      h("span", {}, s.title), h("span", { class: "st-time" }, s.time || ""));
+      h("span", {}, s.title), h("span", { class: "st-time" }, s.time || (s.status === "now" && s.t0 ? elapsed(s.t0) : "")));
     if (s.sub) li.append(h("span", { class: "st-sub" }, s.sub));
     if (s.quick) li.append(h("span", { class: "quick" }, TFS.map((t) => h("button", { type: "button", onclick: () => resume(t) }, t))));
     return li;
@@ -160,109 +159,176 @@ function showCurrent() {
   renderHistory();
 }
 
-// ---------- talking to the API ----------
-async function call(path, body) {
-  const ctrl = new AbortController(), t = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    const res = await fetch(API + path, { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body), signal: ctrl.signal });
-    let data = null;
-    try { data = await res.json(); } catch { /* empty or non-JSON body */ }
-    return { status: res.status, data, retryAfter: res.headers.get("Retry-After") };
-  } catch {
-    return { status: 0, data: null };
-  } finally {
-    clearTimeout(t);
-  }
+// ---------- live run log: one step per event from the agent ----------
+const run = { steps: [], start: 0, gathered: false };
+const elapsed = (t0) => `${((performance.now() - t0) / 1000).toFixed(1)}s`;
+const sourceList = (names) => names.map((n) => SOURCE_NAMES[n] || n).join(", ");
+
+function paintSteps() { renderSteps(run.steps, run.start ? (performance.now() - run.start) / 1000 : null); }
+function openStep(title, sub) { run.steps.push({ title, sub, status: "now", t0: performance.now() }); paintSteps(); }
+function closeStep(title, sub, status = "done") {
+  const step = run.steps.findLast((s) => s.status === "now");
+  if (!step) return;
+  Object.assign(step, { status, time: elapsed(step.t0) });
+  if (title !== undefined) step.title = title;
+  if (sub !== undefined) step.sub = sub;
+  paintSteps();
 }
 
+function onEvent(e, prompt, path) {
+  switch (e.event) {
+    case "checked":
+      if (e.category !== "ok") { closeStep("Checked the request", "declined", "stop"); break; }
+      closeStep("Checked the request", e.follow_up ? "a question about the last result"
+        : e.asset ? `${assetName(e.asset)}, ${e.timeframe || "timeframe not given"}` : undefined);
+      if (e.cached) { openStep("Reusing a recent result"); closeStep(undefined, "same asset and timeframe, no new evidence needed"); }
+      else if (e.follow_up) openStep("Answering from the conversation", "no new evidence");
+      else openStep("Planning the evidence", "choosing the sources that matter");
+      break;
+    case "planned":
+      closeStep("Planned the evidence", sourceList(e.sources));
+      openStep(`Gathering ${e.sources.length} sources`, "in parallel");
+      break;
+    case "asking":
+      closeStep("Decided to ask you", "the timeframe is missing");
+      break;
+    case "gathered": {
+      run.gathered = true;
+      const missing = e.sources.filter((s) => !s.ok).map((s) => s.name);
+      closeStep(`Gathered ${e.sources.length} sources`,
+        sourceList(e.sources.map((s) => s.name)) + (missing.length ? ` · unavailable: ${sourceList(missing)}` : ""));
+      openStep("Reviewing the evidence", "deciding if it has enough");
+      break;
+    }
+    case "agent_done":
+      if (run.gathered) { closeStep("Reviewed the evidence", "enough to score"); openStep("Scoring and writing", "the engine scores, the model explains"); }
+      break;
+    case "result":
+      finish(e.response, prompt);
+      return true;
+    case "error":
+      failed({ status: e.status, data: { detail: e.detail }, retryAfter: e.retry_after }, path);
+      return true;
+  }
+  return false;
+}
+
+// ---------- talking to the API (server-sent events over a POST) ----------
+let ticker = null;
 function setBusy(busy) {
   state.busy = busy;
   $("runBtn").disabled = busy;
   document.querySelector("#result .card")?.classList.toggle("stale", busy);
-  if (busy) {
-    const start = performance.now();
-    const tick = () => renderSteps([{ title: "Agent working", sub: "checking the request, gathering evidence, scoring", status: "now" }],
-      (performance.now() - start) / 1000);
-    tick(); timer = setInterval(tick, 100);
-  } else {
-    clearInterval(timer);
-  }
+  clearInterval(ticker);
+  if (busy) ticker = setInterval(paintSteps, 100);  // keeps the open step's timer moving
 }
 
 async function send(path, body, prompt) {
   if (state.busy) return;
+  Object.assign(run, { steps: [], start: performance.now(), gathered: false });
   setBusy(true);
-  const start = performance.now();
-  const res = await call(path, body);
-  const seconds = (performance.now() - start) / 1000;
-  setBusy(false);
-  if (res.status === 200 && res.data) handle(res.data, prompt, seconds);
-  else failed(res, seconds, path);
+  openStep("Checking the request", `“${prompt}”`);
+  const ctrl = new AbortController(), timeout = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+  let done = false;
+  try {
+    const res = await fetch(API + path, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body), signal: ctrl.signal });
+    if (!res.ok) {
+      let data = null;
+      try { data = await res.json(); } catch { /* empty or non-JSON body */ }
+      failed({ status: res.status, data, retryAfter: res.headers.get("Retry-After") }, path);
+      done = true;
+      return;
+    }
+    const reader = res.body.getReader(), decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const { value, done: ended } = await reader.read();
+      if (ended) break;
+      buffer += decoder.decode(value, { stream: true });
+      let cut;
+      while ((cut = buffer.indexOf("\n\n")) >= 0) {
+        const chunk = buffer.slice(0, cut);
+        buffer = buffer.slice(cut + 2);
+        for (const line of chunk.split("\n")) {
+          if (line.startsWith("data: ")) done = onEvent(JSON.parse(line.slice(6)), prompt, path) || done;
+        }
+      }
+    }
+  } catch {
+    // network error or timeout: reported below
+  } finally {
+    clearTimeout(timeout);
+    if (!done) failed({ status: 0 }, path);
+    setBusy(false);
+  }
 }
 
 function analyze(text) {
-  send("/analyze", state.sessionId ? { query: text, session_id: state.sessionId } : { query: text }, text);
+  send("/analyze/stream", state.sessionId ? { query: text, session_id: state.sessionId } : { query: text }, text);
 }
 
 function resume(answer) {
   if (!state.pending || !state.sessionId) return;
-  send("/resume", { session_id: state.sessionId, answer }, answer);
+  send("/resume/stream", { session_id: state.sessionId, answer }, answer);
 }
 
-function handle(data, prompt, seconds) {
+function finish(data, prompt) {
   state.sessionId = data.session_id;
   state.pending = false;
-  const checked = { title: "Checked the request", sub: `“${prompt}”`, status: "done" };
+  const total = (performance.now() - run.start) / 1000;
+  const freeze = () => renderSteps(run.steps, total);
 
   if (data.status === "refused") {
-    renderSteps([{ ...checked, sub: "declined", status: "stop" }], seconds);
+    freeze();
     notice("Request declined", data.answer);
     return;
   }
 
   if (data.status === "needs_input") {
     state.pending = true;
-    renderSteps([checked, { title: "Needs your input", sub: data.question, status: "ask", quick: true }], seconds);
+    closeStep();
+    run.steps.push({ title: "Needs your input", sub: data.question, status: "ask", quick: true });
+    freeze();
     notice("Waiting for your answer", `${data.question}\nPick a timeframe in the run log, or type your answer in the task bar.`);
     $("task").placeholder = "Type your answer, e.g. 4H";
     return;
   }
 
   $("task").placeholder = "Give the agent a task, e.g. “Gold daily bias” or “why is it bearish?”";
-  const a = data.analysis, trace = data.trace || {};
+  const a = data.analysis;
 
   if (!a) {  // a question about the previous answer, or a reply with no new analysis
-    renderSteps([{ ...checked, sub: trace.follow_up ? "a question about the last result" : checked.sub },
-      { title: "Answered from the conversation", sub: "no new evidence and no new score", status: "done" }], seconds);
+    closeStep("Answered from the conversation", "no new evidence and no new score");
+    freeze();
     if (state.current) { state.current.qa.push({ q: prompt, a: data.answer.split(/\n\s*\n/) }); showCurrent(); }
     else notice("The agent says", data.answer);
     return;
   }
 
-  const steps = [{ ...checked, sub: `${assetName(a.asset)}, ${a.timeframe}` }];
-  if (data.cached) {
-    steps.push({ title: "Reused a recent result", sub: "same asset and timeframe, no new evidence needed", status: "done" });
-  } else {
-    const sources = trace.sources || [];
-    if (sources.length) {
-      const failed = sources.filter((s) => !s.ok).map((s) => SOURCE_NAMES[s.name] || s.name);
-      steps.push({ title: `Gathered ${sources.length} sources` + (trace.tool_rounds > 1 ? ` in ${trace.tool_rounds} rounds` : ""),
-        sub: sources.map((s) => SOURCE_NAMES[s.name] || s.name).join(", ") + (failed.length ? ` · unavailable: ${failed.join(", ")}` : ""), status: "done" });
+  if (!data.cached) {
+    const open = run.steps.findLast((s) => s.status === "now");
+    if (data.stop_reason) {  // a cap stopped the loop: say so before the scoring step
+      closeStep();
+      run.steps.push({ title: "Stopped early", sub: data.stop_reason, status: "stop" });
+      openStep("Scoring and writing");
+    } else if (!open || open.title !== "Scoring and writing") {
+      closeStep();
+      openStep("Scoring and writing");
     }
-    if (data.stop_reason) steps.push({ title: "Stopped early", sub: data.stop_reason, status: "stop" });
-    steps.push({ title: "Scored the evidence", sub: `net ${fmtNet(a.net)} · coverage ${Math.round(a.coverage * 100)}%`, status: "done" });
-    steps.push({ title: "Wrote the explanation", status: "done" });
+    closeStep("Scored and wrote the explanation", `net ${fmtNet(a.net)} · coverage ${Math.round(a.coverage * 100)}%`);
   }
-  renderSteps(steps, seconds);
+  freeze();
 
-  state.asset = PICKS[a.asset] ? a.asset : null; state.tf = a.timeframe; renderPicks();
+  state.asset = PICKS[a.asset] ? a.asset : null;
+  state.tf = a.timeframe;
+  renderPicks();
   state.current = { analysis: a, prose: explanation(data.answer), cached: data.cached, qa: [] };
   state.history.push(state.current);
   showCurrent();
 }
 
-function failed(res, seconds, path) {
+function failed(res, path) {
   const why = {
     0: ["Can't reach the agent", `The FinSight API at ${API} didn't respond. Check that the backend is running, then try again.`],
     409: ["That question has expired", "The agent is no longer waiting for an answer. Give it the task again."],
@@ -270,8 +336,10 @@ function failed(res, seconds, path) {
     429: ["Too many requests", `The limit is 10 requests a minute. Try again in ${res.retryAfter || 60} seconds.`],
     503: ["The agent is busy", "The AI provider is at its limit right now. Try again in a minute."],
   }[res.status] || ["Something went wrong", (res.data && res.data.detail) || `The API answered with status ${res.status}.`];
-  if (res.status === 409 || path === "/analyze") state.pending = false;
-  renderSteps([{ title: "Run failed", sub: why[0], status: "fail" }], seconds);
+  if (res.status === 409 || path.startsWith("/analyze")) state.pending = false;
+  if (run.steps.some((s) => s.status === "now")) closeStep("Run failed", why[0], "fail");
+  else run.steps.push({ title: "Run failed", sub: why[0], status: "fail" });
+  renderSteps(run.steps, (performance.now() - run.start) / 1000);
   notice(why[0], why[1], "error");
 }
 
