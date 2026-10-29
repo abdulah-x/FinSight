@@ -135,4 +135,27 @@ body { background: var(--bg); color: var(--ink); font: 17px/1.55 var(--body) }
   .g { grid-template-columns: 1fr 6rem } .g-bar { grid-column: 1 / -1; grid-row: 2 } .g-detail { grid-row: 3 }
   .score { text-align: left }
 }
-@media (prefers-reduced-motion: reduce) { .marker, .card { transition: none } .st.now .dot { animation: none } }
+/* motion: one entrance for the page, then movement only where the agent is doing something */
+@keyframes rise { from { opacity: 0; transform: translateY(10px) } to { opacity: 1; transform: none } }
+@keyframes grow { from { transform: scaleX(0) } to { transform: scaleX(1) } }
+@keyframes pop { 0% { transform: scale(.6) } 60% { transform: scale(1.15) } 100% { transform: scale(1) } }
+:root { --ease: cubic-bezier(.2, .8, .2, 1) }
+
+.brand, .hero h1, .hero p, .task, .work { animation: rise .7s var(--ease) both }
+.hero h1 { animation-delay: .08s } .hero p { animation-delay: .16s } .task { animation-delay: .24s } .work { animation-delay: .32s }
+
+.st.enter { animation: rise .35s var(--ease) both }
+.st.done .dot { animation: pop .35s var(--ease) }
+.notice { animation: rise .4s var(--ease) both }
+
+.card.reveal .eyebrow { animation: rise .45s var(--ease) both }
+.card.reveal .bias { animation: rise .55s var(--ease) .05s both }
+.card.reveal .score { animation: rise .55s var(--ease) .1s both }
+.card.reveal .prose { animation: rise .5s var(--ease) .2s both }
+.card.reveal .g { animation: rise .45s var(--ease) both; animation-delay: calc(.25s + var(--i, 0) * .07s) }
+.card.reveal .g-fill { animation: grow .7s var(--ease) both; animation-delay: calc(.35s + var(--i, 0) * .07s) }
+.g-fill.from-left { transform-origin: left center } .g-fill.from-right { transform-origin: right center }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important }
+}

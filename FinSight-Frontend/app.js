@@ -30,9 +30,22 @@ const tone = (v) => (v == null ? "" : Math.abs(v) < 0.05 ? "flat" : v > 0 ? "up"
 // colour a group by the engine's own label, so "neutral" is never drawn red after rounding
 const labelTone = (label) => (/bullish/.test(label) ? "up" : /bearish/.test(label) ? "down" : "flat");
 const assetName = (a) => ASSETS[a] || a;
+const reducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+function countUp(el, target, ms = 700) {
+  if (reducedMotion()) { el.textContent = String(target); return; }
+  const start = performance.now();
+  const frame = (now) => {
+    const t = Math.min(1, (now - start) / ms);
+    el.textContent = String(Math.round(target * (1 - (1 - t) ** 3)));
+    if (t < 1) requestAnimationFrame(frame);
+  };
+  el.textContent = "0";
+  requestAnimationFrame(frame);
+}
 
 // ---------- background: faint dot grid and one long price path ----------
-function drawBg() {
+function drawBg(animate = false) {
   const c = $("bgArt"), dpr = Math.min(window.devicePixelRatio || 1, 2);
   const w = window.innerWidth, ht = window.innerHeight;
   c.width = w * dpr; c.height = ht * dpr;
@@ -44,10 +57,25 @@ function drawBg() {
   let seed = 7; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
   const pts = []; let y = ht * 0.72;
   for (let px = 0; px <= w; px += 6) { y += (rnd() - 0.48) * 14; y = Math.max(ht * 0.45, Math.min(ht * 0.92, y)); pts.push([px, y]); }
-  x.globalAlpha = 0.07; x.fillStyle = accent; x.beginPath(); x.moveTo(0, ht);
-  pts.forEach(([px, py]) => x.lineTo(px, py)); x.lineTo(w, ht); x.closePath(); x.fill();
-  x.globalAlpha = 0.22; x.strokeStyle = accent; x.lineWidth = 1.2; x.beginPath();
-  pts.forEach(([px, py], i) => (i ? x.lineTo(px, py) : x.moveTo(px, py))); x.stroke();
+  const dots = x.getImageData(0, 0, c.width, c.height);
+
+  const paint = (share) => {  // draw the price path up to `share` (0..1) of its length
+    x.putImageData(dots, 0, 0);
+    const upto = pts.slice(0, Math.max(2, Math.ceil(pts.length * share)));
+    const [endX] = upto[upto.length - 1];
+    x.globalAlpha = 0.07; x.fillStyle = accent; x.beginPath(); x.moveTo(0, ht);
+    upto.forEach(([px, py]) => x.lineTo(px, py)); x.lineTo(endX, ht); x.closePath(); x.fill();
+    x.globalAlpha = 0.22; x.strokeStyle = accent; x.lineWidth = 1.2; x.beginPath();
+    upto.forEach(([px, py], i) => (i ? x.lineTo(px, py) : x.moveTo(px, py))); x.stroke();
+  };
+  if (!animate || reducedMotion()) return paint(1);
+  const start = performance.now(), DRAW_MS = 1600;
+  const frame = (now) => {
+    const t = Math.min(1, (now - start) / DRAW_MS);
+    paint(1 - (1 - t) ** 3);  // ease out: fast start, gentle finish
+    if (t < 1) requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
 }
 
 // ---------- quick picks: they only fill in the task bar ----------
@@ -94,14 +122,25 @@ function blocks(paragraphs) {
 }
 
 // ---------- run log ----------
+// Each step keeps its own <li> and is updated in place, so its entrance animation
+// plays once when it appears (the log repaints every 100ms while the agent works).
 function renderSteps(steps, seconds) {
-  $("steps").replaceChildren(...steps.map((s) => {
-    const li = h("li", { class: `st ${s.status}` }, h("span", { class: "dot", "aria-hidden": "true" }),
-      h("span", {}, s.title), h("span", { class: "st-time" }, s.time || (s.status === "now" && s.t0 ? elapsed(s.t0) : "")));
-    if (s.sub) li.append(h("span", { class: "st-sub" }, s.sub));
-    if (s.quick) li.append(h("span", { class: "quick" }, TFS.map((t) => h("button", { type: "button", onclick: () => resume(t) }, t))));
-    return li;
-  }));
+  const list = $("steps");
+  if ([...list.children].some((li, i) => li !== steps[i]?.el)) list.replaceChildren();  // a new run
+  for (const s of steps) {
+    if (!s.el) {
+      s.el = h("li", {}, h("span", { class: "dot", "aria-hidden": "true" }), h("span", { class: "st-title" }),
+        h("span", { class: "st-time" }), h("span", { class: "st-sub" }));
+      if (s.quick) s.el.append(h("span", { class: "quick" }, TFS.map((t) => h("button", { type: "button", onclick: () => resume(t) }, t))));
+    }
+    const [, title, time, sub] = s.el.children;
+    s.el.className = `st ${s.status} enter`;
+    title.textContent = s.title;
+    time.textContent = s.time || (s.status === "now" && s.t0 ? elapsed(s.t0) : "");
+    sub.textContent = s.sub || "";
+    sub.hidden = !s.sub;
+    if (s.el.parentNode !== list) list.append(s.el);
+  }
   $("runTotal").textContent = seconds != null ? `${seconds.toFixed(1)}s` : "";
 }
 
@@ -115,13 +154,15 @@ function renderHistory() {
 }
 
 // ---------- result area ----------
-function biasCard(run) {
+function biasCard(run, reveal = false) {
   const a = run.analysis;
+  const score = h("b", {}, String(a.score));
+  if (reveal) countUp(score, a.score);
   const marker = h("div", { class: "marker", title: `net evidence ${fmtNet(a.net)}` });
   requestAnimationFrame(() => requestAnimationFrame(() => { marker.style.left = `${(a.net + 1) * 50}%`; }));
   const events = a.event_penalty < 1 && (a.breakdown.find((l) => l.startsWith("Events:")) || "").replace(/^Events:\s*/, "").replace(/\s*\(score x[\d.]+\)$/, "");
 
-  return h("article", { class: "card" },
+  return h("article", { class: reveal ? "card reveal" : "card" },
     h("div", { class: "card-top" },
       h("div", { class: "eyebrow" }, `${assetName(a.asset).toUpperCase()} · ${a.timeframe}`,
         run.cached && h("span", { class: "chip", title: "Same asset and timeframe were analysed recently, so the stored result is shown" }, "Recent result"),
@@ -129,7 +170,7 @@ function biasCard(run) {
         events && h("span", { class: "chip warn" }, `${events} · score ×${a.event_penalty}`)),
       h("div", { class: "verdict" },
         h("h2", { class: `bias ${a.bias}` }, a.bias),
-        h("div", { class: "score" }, h("b", {}, String(a.score)), h("small", {}, " /100"), h("span", { class: "bucket" }, `${a.bucket} evidence`))),
+        h("div", { class: "score" }, score, h("small", {}, " /100"), h("span", { class: "bucket" }, `${a.bucket} evidence`))),
       h("div", { class: "meter", role: "img", "aria-label": `Net evidence ${fmtNet(a.net)} on a scale from −1 bearish to +1 bullish; neutral between −0.15 and +0.15` },
         h("div", { class: "track" }, h("div", { class: "band" }), marker),
         h("div", { class: "scale", "aria-hidden": "true" }, h("span", {}, "Bearish −1"), h("span", {}, "neutral zone ±0.15"), h("span", {}, "+1 Bullish")))),
@@ -137,14 +178,17 @@ function biasCard(run) {
       h("div", { class: "prose" }, h("h3", { class: "sec" }, "What the agent found"),
         run.prose.length ? blocks(run.prose) : h("p", {}, "No explanation was written for this run.")),
       h("div", { class: "groups" }, h("h3", { class: "sec" }, `How the score was built · coverage ${Math.round(a.coverage * 100)}%`),
-        (a.rows || []).map((g) => {
-          const fill = h("div", { class: `g-fill ${labelTone(g.label)}` });
+        (a.rows || []).map((g, i) => {
+          // bars grow outward from the centre line: right for bullish, left for bearish
+          const fill = h("div", { class: `g-fill ${labelTone(g.label)} ${g.value >= 0 ? "from-left" : "from-right"}` });
           if (g.value != null) { fill.style[g.value >= 0 ? "left" : "right"] = "50%"; fill.style.width = `${Math.abs(g.value) * 50}%`; }
-          return h("div", { class: "g" + (g.value == null ? " missing" : "") },
+          const row = h("div", { class: "g" + (g.value == null ? " missing" : "") },
             h("div", { class: "g-name" }, g.group, h("small", {}, `${Math.round(g.weight * 100)}%`)),
             h("div", { class: "g-bar", "aria-hidden": "true" }, g.value != null && fill),
             h("div", { class: `g-word ${g.value == null ? "" : labelTone(g.label)}` }, g.label),
             h("div", { class: "g-detail" }, g.detail || "source unavailable this run"));
+          row.style.setProperty("--i", i);  // stagger: one row after another
+          return row;
         }))),
     run.qa.map((x) => h("div", { class: "qa" }, h("div", { class: "q" }, x.q), h("div", { class: "a" }, blocks(x.a)))),
     h("div", { class: "foot" }, "The evidence score measures how strongly the evidence agrees, scaled by coverage and upcoming events. It is not yet calibrated against outcomes. Not financial advice."));
@@ -154,8 +198,8 @@ function notice(title, text, kind = "") {
   $("result").replaceChildren(h("div", { class: `card notice ${kind}` }, h("h2", {}, title), h("p", {}, text)));
 }
 
-function showCurrent() {
-  if (state.current) $("result").replaceChildren(biasCard(state.current));
+function showCurrent(reveal = false) {
+  if (state.current) $("result").replaceChildren(biasCard(state.current, reveal));
   renderHistory();
 }
 
@@ -325,7 +369,7 @@ function finish(data, prompt) {
   renderPicks();
   state.current = { analysis: a, prose: explanation(data.answer), cached: data.cached, qa: [] };
   state.history.push(state.current);
-  showCurrent();
+  showCurrent(true);
 }
 
 function failed(res, path) {
@@ -362,7 +406,7 @@ $("taskForm").addEventListener("submit", (e) => {
 window.addEventListener("resize", drawBg);
 window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", drawBg);
 
-drawBg();
+drawBg(true);
 renderPicks();
 renderSteps([{ title: "Ready", sub: "give the agent a task above", status: "wait" }], null);
 renderHistory();
