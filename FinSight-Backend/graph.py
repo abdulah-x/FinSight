@@ -170,7 +170,8 @@ def guardrail(state: AgentState) -> dict:
     prompt = GUARDRAIL_PROMPT.format(asset=state.get("asset"), timeframe=state.get("timeframe"))
     try:
         decision = guardrail_llm.invoke([SystemMessage(prompt), HumanMessage(query)])
-    except Exception:  # fail closed: if we can't check it, we don't run it
+    except Exception as e:  # fail closed: if we can't check it, we don't run it
+        log.error("guardrail LLM call failed, request refused: %s", e)
         return {**turn, "guardrail_result": "error"}
     asset = decision.asset or state.get("asset")
     timeframe = decision.timeframe or state.get("timeframe")
@@ -210,6 +211,7 @@ def agent(state: AgentState) -> dict:
     try:
         response = model.invoke([SystemMessage(SYSTEM_PROMPT + context)] + _for_llm(state["messages"]))
     except Exception as e:  # timeout / rate limit / provider down: answer politely, don't crash
+        log.error("agent LLM call failed, answered busy: %s", e)
         return {"messages": [AIMessage(content=LLM_BUSY)], "stop_reason": f"LLM unavailable ({type(e).__name__})"}
     return {"messages": [response]}
 
@@ -263,7 +265,8 @@ def score_news(news: dict | None, symbol: str, timeframe: str) -> list[dict] | N
     data = '<untrusted_data source="news">\n' + "\n".join(lines) + "\n</untrusted_data>"
     try:
         result = news_llm.invoke([SystemMessage(prompt), HumanMessage(data)])
-    except Exception:
+    except Exception as e:
+        log.error("news scoring failed, news counted as missing: %s", e)
         return None
     valid = {s.index: s for s in result.scores if 0 <= s.index < len(lines)}
     return [{"direction": s.direction, "relevance": s.relevance} for s in valid.values()]
@@ -289,7 +292,8 @@ def _write_answer(assessment: Assessment, symbol: str, timeframe: str, results: 
     try:
         response = llm.invoke([SystemMessage(prompt), HumanMessage(data)])
         explanation, usage = response.content.strip(), response.usage_metadata
-    except Exception:
+    except Exception as e:
+        log.error("writer LLM call failed, answer sent without explanation: %s", e)
         explanation, usage = "(Explanation unavailable right now; the bias and score were computed from the evidence below.)", None
 
     content = (

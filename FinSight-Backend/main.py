@@ -30,6 +30,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 import yfinance as yf
 
+import alerts
 import db
 from graph import CONVERSATION_STORAGE, MAX_QUERY_CHARS, agent_graph
 from tools import get_economic_calendar
@@ -39,6 +40,7 @@ from tools import get_economic_calendar
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s: %(message)s")
 for noisy in ("httpx", "apscheduler", "yfinance"):
     logging.getLogger(noisy).setLevel(logging.WARNING)
+alerts.install()  # errors -> Discord, when DISCORD_WEBHOOK_URL is set
 log = logging.getLogger("finsight")
 
 
@@ -75,6 +77,9 @@ async def lifespan(app: FastAPI):
         db.init_db()
         log.info("predictions storage: %s", "on" if db.enabled() else "off (DATABASE_URL not set)")
         scheduler = start_scheduler()
+        alerts.notify("FinSight backend started",
+                      f"predictions storage: {'on' if db.enabled() else 'off'}, conversations: {CONVERSATION_STORAGE}, "
+                      f"collector: {'on' if os.environ.get('COLLECTOR_ENABLED', '').lower() == 'true' else 'off'}")
     except Exception:
         log.exception("could not initialise storage or the scheduler; continuing without them")
     yield
