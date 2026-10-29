@@ -167,6 +167,6 @@ def test_live_collect_one_stores_the_engine_result_as_a_collector_prediction(tes
 def test_live_collect_covers_every_asset_and_skips_gold_when_its_market_is_shut(test_db):
     gold_open = collector.gold_market_open(datetime.now(timezone.utc))
     stored = collector.collect(["1D"])
-    expected = {"BTC-USD", "ETH-USD", "SOL-USD"} | ({"GC=F"} if gold_open else set())
+    expected = {"BTC-USD", "ETH-USD"} | ({"GC=F"} if gold_open else set())
     assert stored == len(expected)
     assert {r[0] for r in rows(test_db)} == expected

@@ -100,11 +100,11 @@ def test_live_analysis_is_stored_then_cached_then_followed_up(test_db, groq_budg
 
 @live
 def test_live_question_then_resume_completes_the_analysis(groq_budget):
-    first = client.post("/analyze", json={"query": "what's the bias on solana?"}).json()
+    first = client.post("/analyze", json={"query": "what's the bias on ethereum?"}).json()
     assert first["status"] == "needs_input" and first["question"]
     r = client.post("/resume", json={"session_id": first["session_id"], "answer": "1D"})
     assert r.status_code == 200 and r.json()["status"] == "complete"
-    assert (r.json()["analysis"]["asset"], r.json()["analysis"]["timeframe"]) == ("SOL-USD", "1D")
+    assert (r.json()["analysis"]["asset"], r.json()["analysis"]["timeframe"]) == ("ETH-USD", "1D")
 
 
 @live

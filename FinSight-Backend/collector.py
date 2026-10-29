@@ -28,7 +28,7 @@ from confidence import CONFIG, asset_class  # noqa: E402
 from graph import analyse  # noqa: E402
 from tools import _DEFAULT_NEWS_QUERY, _google_news, gather_evidence  # noqa: E402
 
-ASSETS = ["BTC-USD", "ETH-USD", "SOL-USD", "GC=F"]
+ASSETS = ["BTC-USD", "ETH-USD", "GC=F"]
 SOURCES = {  # everything the engine can use for that asset class (news is fetched separately)
     "crypto": ["price_action", "macro", "calendar", "fear_greed", "funding", "social"],
     "gold": ["price_action", "macro", "calendar", "social"],

@@ -22,7 +22,7 @@ tavily_search = TavilySearch(
 
 # The allowlist: these Literals become JSON-schema enums, so the LLM is shown
 # exactly which values are legal, and @tool rejects anything else before our code runs.
-CryptoSymbol = Literal["BTC-USD", "ETH-USD", "SOL-USD"]
+CryptoSymbol = Literal["BTC-USD", "ETH-USD"]
 Symbol = Literal[CryptoSymbol, "GC=F"]
 Timeframe = Literal["1H", "4H", "1D", "1W"]
 
@@ -308,7 +308,7 @@ def search_news(
 
 
 # yfinance symbol -> StockTwits symbol
-_STOCKTWITS = {"BTC-USD": "BTC.X", "ETH-USD": "ETH.X", "SOL-USD": "SOL.X", "GC=F": "XAUUSD"}
+_STOCKTWITS = {"BTC-USD": "BTC.X", "ETH-USD": "ETH.X", "GC=F": "XAUUSD"}
 
 
 @tool
@@ -348,7 +348,7 @@ def get_social_sentiment(symbol: Symbol) -> dict:
 
 EvidenceSource = Literal["price_action", "macro", "calendar", "fear_greed", "funding", "news", "social"]
 _CRYPTO_ONLY = {"fear_greed", "funding"}
-_DEFAULT_NEWS_QUERY = {"BTC-USD": "bitcoin", "ETH-USD": "ethereum", "SOL-USD": "solana", "GC=F": "gold price"}
+_DEFAULT_NEWS_QUERY = {"BTC-USD": "bitcoin", "ETH-USD": "ethereum", "GC=F": "gold price"}
 SOURCE_TIMEOUT_SECONDS = 5  # below the agent's 6s tool timeout, so slow sources fail here, one by one
 _source_pool = ThreadPoolExecutor(max_workers=14)
 

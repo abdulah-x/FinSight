@@ -4,7 +4,7 @@
 "use strict";
 
 const API = document.documentElement.dataset.api || "http://localhost:8000";
-const ASSETS = { "BTC-USD": "Bitcoin", "ETH-USD": "Ethereum", "GC=F": "Gold", "SOL-USD": "Solana" };
+const ASSETS = { "BTC-USD": "Bitcoin", "ETH-USD": "Ethereum", "GC=F": "Gold" };
 const PICKS = { "BTC-USD": "BTC", "ETH-USD": "ETH", "GC=F": "Gold" };
 const TFS = ["1H", "4H", "1D", "1W"];
 const SOURCE_NAMES = { price_action: "price action", macro: "macro", calendar: "calendar", fear_greed: "fear & greed",

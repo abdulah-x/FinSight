@@ -28,8 +28,8 @@ from tools import (
     search_news,
 )
 
-ASSETS = ["BTC-USD", "ETH-USD", "SOL-USD", "GC=F"]
-CRYPTO = ["BTC-USD", "ETH-USD", "SOL-USD"]
+ASSETS = ["BTC-USD", "ETH-USD", "GC=F"]
+CRYPTO = ["BTC-USD", "ETH-USD"]
 # newest bar older than this = stale data (gold allows for its weekend close)
 MAX_AGE_HOURS = {"1H": 3, "4H": 9, "1D": 50, "1W": 24 * 9}
 GOLD_EXTRA_HOURS = 72
@@ -39,9 +39,10 @@ live = pytest.mark.live
 
 # ---------- the allowlist: rejected before any network call ----------
 
-def test_price_action_rejects_unlisted_symbol():
+@pytest.mark.parametrize("symbol", ["DOGE-USD", "SOL-USD"])  # SOL was dropped: BTC, ETH and gold only
+def test_price_action_rejects_unlisted_symbol(symbol):
     with pytest.raises(ValidationError):
-        get_price_action.invoke({"symbol": "DOGE-USD", "timeframe": "1D"})
+        get_price_action.invoke({"symbol": symbol, "timeframe": "1D"})
 
 
 @pytest.mark.parametrize("hours", [0, 169, 500])
