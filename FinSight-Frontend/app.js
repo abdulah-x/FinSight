@@ -1,0 +1,301 @@
+// FinSight Bias Desk: talks to the agent API (POST /analyze, POST /resume).
+// Everything the model or a data source wrote is inserted as text (textContent),
+// never parsed as HTML, so it can't inject markup or scripts.
+"use strict";
+
+const API = document.documentElement.dataset.api || "http://localhost:8000";
+const ASSETS = { "BTC-USD": "Bitcoin", "ETH-USD": "Ethereum", "GC=F": "Gold", "SOL-USD": "Solana" };
+const PICKS = { "BTC-USD": "BTC", "ETH-USD": "ETH", "GC=F": "Gold" };
+const TFS = ["1H", "4H", "1D", "1W"];
+const SOURCE_NAMES = { price_action: "price action", macro: "macro", calendar: "calendar", fear_greed: "fear & greed",
+                       funding: "funding", news: "news", social: "social" };
+const REQUEST_TIMEOUT_MS = 60000;
+
+const state = { sessionId: null, pending: false, current: null, history: [], busy: false, asset: null, tf: null };
+const $ = (id) => document.getElementById(id);
+
+// ---------- DOM helper ----------
+function h(tag, attrs = {}, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") el.className = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else el.setAttribute(k, v);
+  }
+  for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid);
+  return el;
+}
+const fmtNet = (n) => (n > 0 ? "+" : n < 0 ? "−" : "") + Math.abs(n).toFixed(2);
+const tone = (v) => (v == null ? "" : Math.abs(v) < 0.05 ? "flat" : v > 0 ? "up" : "down");
+// colour a group by the engine's own label, so "neutral" is never drawn red after rounding
+const labelTone = (label) => (/bullish/.test(label) ? "up" : /bearish/.test(label) ? "down" : "flat");
+const assetName = (a) => ASSETS[a] || a;
+
+// ---------- background: faint dot grid and one long price path ----------
+function drawBg() {
+  const c = $("bgArt"), dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = window.innerWidth, ht = window.innerHeight;
+  c.width = w * dpr; c.height = ht * dpr;
+  const x = c.getContext("2d"); x.scale(dpr, dpr); x.clearRect(0, 0, w, ht);
+  const css = getComputedStyle(document.documentElement);
+  const muted = css.getPropertyValue("--muted").trim(), accent = css.getPropertyValue("--accent").trim();
+  x.globalAlpha = 0.16; x.fillStyle = muted;
+  for (let gx = 12; gx < w; gx += 28) for (let gy = 12; gy < ht; gy += 28) x.fillRect(gx, gy, 1.2, 1.2);
+  let seed = 7; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  const pts = []; let y = ht * 0.72;
+  for (let px = 0; px <= w; px += 6) { y += (rnd() - 0.48) * 14; y = Math.max(ht * 0.45, Math.min(ht * 0.92, y)); pts.push([px, y]); }
+  x.globalAlpha = 0.07; x.fillStyle = accent; x.beginPath(); x.moveTo(0, ht);
+  pts.forEach(([px, py]) => x.lineTo(px, py)); x.lineTo(w, ht); x.closePath(); x.fill();
+  x.globalAlpha = 0.22; x.strokeStyle = accent; x.lineWidth = 1.2; x.beginPath();
+  pts.forEach(([px, py], i) => (i ? x.lineTo(px, py) : x.moveTo(px, py))); x.stroke();
+}
+
+// ---------- quick picks: they only fill in the task bar ----------
+function renderPicks() {
+  const chips = (id, values, label, key) => $(id).replaceChildren(...values.map((v) => h("button", {
+    type: "button", class: "pick", "aria-pressed": String(state[key] === v),
+    onclick: () => {
+      state[key] = v; renderPicks();
+      if (state.asset && state.tf) $("task").value = `${assetName(state.asset)} ${state.tf} bias`;
+      $("task").focus();
+    },
+  }, label(v))));
+  chips("assetPicks", Object.keys(PICKS), (a) => PICKS[a], "asset");
+  chips("tfPicks", TFS, (t) => t, "tf");
+}
+
+// ---------- the writer's text: drop the code-written header and breakdown ----------
+function explanation(answer) {
+  let body = (answer || "").split("\nHow the score was built:")[0];
+  const firstBreak = body.indexOf("\n");
+  body = firstBreak >= 0 ? body.slice(firstBreak + 1) : "";
+  return body.trim().split(/\n\s*\n/).map((b) => b.trim()).filter(Boolean);
+}
+
+function blocks(paragraphs) {
+  const clean = (s) => s.replace(/\*\*(.+?)\*\*/g, "$1").replace(/^#+\s*/, "");
+  const bullet = /^\s*[-*•]\s+/;
+  // within a block, runs of "- item" lines become a list and other lines a paragraph
+  return paragraphs.flatMap((p) => {
+    const out = [];
+    for (const line of p.split("\n")) {
+      const last = out[out.length - 1];
+      if (bullet.test(line)) {
+        const item = h("li", {}, clean(line.replace(bullet, "")));
+        if (last && last.tagName === "UL") last.append(item); else out.push(h("ul", {}, item));
+      } else if (last && last.tagName === "P") {
+        last.append(" " + clean(line));
+      } else {
+        out.push(h("p", {}, clean(line)));
+      }
+    }
+    return out;
+  });
+}
+
+// ---------- run log ----------
+let timer = null;
+function renderSteps(steps, seconds) {
+  $("steps").replaceChildren(...steps.map((s) => {
+    const li = h("li", { class: `st ${s.status}` }, h("span", { class: "dot", "aria-hidden": "true" }),
+      h("span", {}, s.title), h("span", { class: "st-time" }, s.time || ""));
+    if (s.sub) li.append(h("span", { class: "st-sub" }, s.sub));
+    if (s.quick) li.append(h("span", { class: "quick" }, TFS.map((t) => h("button", { type: "button", onclick: () => resume(t) }, t))));
+    return li;
+  }));
+  $("runTotal").textContent = seconds != null ? `${seconds.toFixed(1)}s` : "";
+}
+
+function renderHistory() {
+  const past = state.history.filter((r) => r !== state.current);
+  $("past").replaceChildren(...(past.length
+    ? past.slice().reverse().map((r) => h("li", {}, h("button", { type: "button", onclick: () => reopen(r) },
+        h("span", {}, `${assetName(r.analysis.asset)} ${r.analysis.timeframe}`),
+        h("span", { class: tone(r.analysis.bias === "Bullish" ? 1 : r.analysis.bias === "Bearish" ? -1 : 0) }, `${r.analysis.bias} ${r.analysis.score}`))))
+    : [h("li", { class: "empty-note" }, "Runs you make appear here.")]));
+}
+
+// ---------- result area ----------
+function biasCard(run) {
+  const a = run.analysis;
+  const marker = h("div", { class: "marker", title: `net evidence ${fmtNet(a.net)}` });
+  requestAnimationFrame(() => requestAnimationFrame(() => { marker.style.left = `${(a.net + 1) * 50}%`; }));
+  const events = a.event_penalty < 1 && (a.breakdown.find((l) => l.startsWith("Events:")) || "").replace(/^Events:\s*/, "").replace(/\s*\(score x[\d.]+\)$/, "");
+
+  return h("article", { class: "card" },
+    h("div", { class: "card-top" },
+      h("div", { class: "eyebrow" }, `${assetName(a.asset).toUpperCase()} · ${a.timeframe}`,
+        run.cached && h("span", { class: "chip", title: "Same asset and timeframe were analysed recently, so the stored result is shown" }, "Recent result"),
+        run.reopened && h("span", { class: "chip" }, "Earlier run"),
+        events && h("span", { class: "chip warn" }, `${events} · score ×${a.event_penalty}`)),
+      h("div", { class: "verdict" },
+        h("h2", { class: `bias ${a.bias}` }, a.bias),
+        h("div", { class: "score" }, h("b", {}, String(a.score)), h("small", {}, " /100"), h("span", { class: "bucket" }, `${a.bucket} evidence`))),
+      h("div", { class: "meter", role: "img", "aria-label": `Net evidence ${fmtNet(a.net)} on a scale from −1 bearish to +1 bullish; neutral between −0.15 and +0.15` },
+        h("div", { class: "track" }, h("div", { class: "band" }), marker),
+        h("div", { class: "scale", "aria-hidden": "true" }, h("span", {}, "Bearish −1"), h("span", {}, "neutral zone ±0.15"), h("span", {}, "+1 Bullish")))),
+    h("div", { class: "cols" },
+      h("div", { class: "prose" }, h("h3", { class: "sec" }, "What the agent found"),
+        run.prose.length ? blocks(run.prose) : h("p", {}, "No explanation was written for this run.")),
+      h("div", { class: "groups" }, h("h3", { class: "sec" }, `How the score was built · coverage ${Math.round(a.coverage * 100)}%`),
+        (a.rows || []).map((g) => {
+          const fill = h("div", { class: `g-fill ${labelTone(g.label)}` });
+          if (g.value != null) { fill.style[g.value >= 0 ? "left" : "right"] = "50%"; fill.style.width = `${Math.abs(g.value) * 50}%`; }
+          return h("div", { class: "g" + (g.value == null ? " missing" : "") },
+            h("div", { class: "g-name" }, g.group, h("small", {}, `${Math.round(g.weight * 100)}%`)),
+            h("div", { class: "g-bar", "aria-hidden": "true" }, g.value != null && fill),
+            h("div", { class: `g-word ${g.value == null ? "" : labelTone(g.label)}` }, g.label),
+            h("div", { class: "g-detail" }, g.detail || "source unavailable this run"));
+        }))),
+    run.qa.map((x) => h("div", { class: "qa" }, h("div", { class: "q" }, x.q), h("div", { class: "a" }, blocks(x.a)))),
+    h("div", { class: "foot" }, "The evidence score measures how strongly the evidence agrees, scaled by coverage and upcoming events. It is not yet calibrated against outcomes. Not financial advice."));
+}
+
+function notice(title, text, kind = "") {
+  $("result").replaceChildren(h("div", { class: `card notice ${kind}` }, h("h2", {}, title), h("p", {}, text)));
+}
+
+function showCurrent() {
+  if (state.current) $("result").replaceChildren(biasCard(state.current));
+  renderHistory();
+}
+
+// ---------- talking to the API ----------
+async function call(path, body) {
+  const ctrl = new AbortController(), t = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const res = await fetch(API + path, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body), signal: ctrl.signal });
+    let data = null;
+    try { data = await res.json(); } catch { /* empty or non-JSON body */ }
+    return { status: res.status, data, retryAfter: res.headers.get("Retry-After") };
+  } catch {
+    return { status: 0, data: null };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+function setBusy(busy) {
+  state.busy = busy;
+  $("runBtn").disabled = busy;
+  document.querySelector("#result .card")?.classList.toggle("stale", busy);
+  if (busy) {
+    const start = performance.now();
+    const tick = () => renderSteps([{ title: "Agent working", sub: "checking the request, gathering evidence, scoring", status: "now" }],
+      (performance.now() - start) / 1000);
+    tick(); timer = setInterval(tick, 100);
+  } else {
+    clearInterval(timer);
+  }
+}
+
+async function send(path, body, prompt) {
+  if (state.busy) return;
+  setBusy(true);
+  const start = performance.now();
+  const res = await call(path, body);
+  const seconds = (performance.now() - start) / 1000;
+  setBusy(false);
+  if (res.status === 200 && res.data) handle(res.data, prompt, seconds);
+  else failed(res, seconds, path);
+}
+
+function analyze(text) {
+  send("/analyze", state.sessionId ? { query: text, session_id: state.sessionId } : { query: text }, text);
+}
+
+function resume(answer) {
+  if (!state.pending || !state.sessionId) return;
+  send("/resume", { session_id: state.sessionId, answer }, answer);
+}
+
+function handle(data, prompt, seconds) {
+  state.sessionId = data.session_id;
+  state.pending = false;
+  const checked = { title: "Checked the request", sub: `“${prompt}”`, status: "done" };
+
+  if (data.status === "refused") {
+    renderSteps([{ ...checked, sub: "declined", status: "stop" }], seconds);
+    notice("Request declined", data.answer);
+    return;
+  }
+
+  if (data.status === "needs_input") {
+    state.pending = true;
+    renderSteps([checked, { title: "Needs your input", sub: data.question, status: "ask", quick: true }], seconds);
+    notice("Waiting for your answer", `${data.question}\nPick a timeframe in the run log, or type your answer in the task bar.`);
+    $("task").placeholder = "Type your answer, e.g. 4H";
+    return;
+  }
+
+  $("task").placeholder = "Give the agent a task, e.g. “Gold daily bias” or “why is it bearish?”";
+  const a = data.analysis, trace = data.trace || {};
+
+  if (!a) {  // a question about the previous answer, or a reply with no new analysis
+    renderSteps([{ ...checked, sub: trace.follow_up ? "a question about the last result" : checked.sub },
+      { title: "Answered from the conversation", sub: "no new evidence and no new score", status: "done" }], seconds);
+    if (state.current) { state.current.qa.push({ q: prompt, a: data.answer.split(/\n\s*\n/) }); showCurrent(); }
+    else notice("The agent says", data.answer);
+    return;
+  }
+
+  const steps = [{ ...checked, sub: `${assetName(a.asset)}, ${a.timeframe}` }];
+  if (data.cached) {
+    steps.push({ title: "Reused a recent result", sub: "same asset and timeframe, no new evidence needed", status: "done" });
+  } else {
+    const sources = trace.sources || [];
+    if (sources.length) {
+      const failed = sources.filter((s) => !s.ok).map((s) => SOURCE_NAMES[s.name] || s.name);
+      steps.push({ title: `Gathered ${sources.length} sources` + (trace.tool_rounds > 1 ? ` in ${trace.tool_rounds} rounds` : ""),
+        sub: sources.map((s) => SOURCE_NAMES[s.name] || s.name).join(", ") + (failed.length ? ` · unavailable: ${failed.join(", ")}` : ""), status: "done" });
+    }
+    if (data.stop_reason) steps.push({ title: "Stopped early", sub: data.stop_reason, status: "stop" });
+    steps.push({ title: "Scored the evidence", sub: `net ${fmtNet(a.net)} · coverage ${Math.round(a.coverage * 100)}%`, status: "done" });
+    steps.push({ title: "Wrote the explanation", status: "done" });
+  }
+  renderSteps(steps, seconds);
+
+  state.asset = PICKS[a.asset] ? a.asset : null; state.tf = a.timeframe; renderPicks();
+  state.current = { analysis: a, prose: explanation(data.answer), cached: data.cached, qa: [] };
+  state.history.push(state.current);
+  showCurrent();
+}
+
+function failed(res, seconds, path) {
+  const why = {
+    0: ["Can't reach the agent", `The FinSight API at ${API} didn't respond. Check that the backend is running, then try again.`],
+    409: ["That question has expired", "The agent is no longer waiting for an answer. Give it the task again."],
+    422: ["Request not accepted", "Keep the task under 500 characters."],
+    429: ["Too many requests", `The limit is 10 requests a minute. Try again in ${res.retryAfter || 60} seconds.`],
+    503: ["The agent is busy", "The AI provider is at its limit right now. Try again in a minute."],
+  }[res.status] || ["Something went wrong", (res.data && res.data.detail) || `The API answered with status ${res.status}.`];
+  if (res.status === 409 || path === "/analyze") state.pending = false;
+  renderSteps([{ title: "Run failed", sub: why[0], status: "fail" }], seconds);
+  notice(why[0], why[1], "error");
+}
+
+function reopen(run) {
+  state.current = { ...run, reopened: true, cached: false };
+  renderSteps([{ title: "Reopened an earlier run", sub: `${assetName(run.analysis.asset)} ${run.analysis.timeframe}`, status: "done" }], null);
+  $("result").replaceChildren(biasCard(state.current));
+  state.current = run;
+  renderHistory();
+}
+
+// ---------- start ----------
+$("taskForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const input = $("task"), text = input.value.trim();
+  if (!text || state.busy) return;
+  input.value = "";
+  if (state.pending) resume(text); else analyze(text);
+});
+window.addEventListener("resize", drawBg);
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", drawBg);
+
+drawBg();
+renderPicks();
+renderSteps([{ title: "Ready", sub: "give the agent a task above", status: "wait" }], null);
+renderHistory();
+notice("No analysis yet", "Pick an asset and a timeframe, or type a task like “Gold daily bias”. The agent checks the request, gathers the evidence it needs, scores it and explains the result.");
