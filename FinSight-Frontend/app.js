@@ -1,4 +1,4 @@
-// FinSight Bias Desk: talks to the agent API (POST /analyze, POST /resume).
+// FinSight: talks to the agent API (POST /analyze, POST /resume).
 // Everything the model or a data source wrote is inserted as text (textContent),
 // never parsed as HTML, so it can't inject markup or scripts.
 "use strict";
