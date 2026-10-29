@@ -91,8 +91,8 @@ def test_empty_report():
 # ---------- scheduler ----------
 
 @pytest.mark.parametrize("collector_on, jobs", [
-    ("true", {"resolver", "collect_1h", "collect_4h", "collect_1d", "collect_1w"}),
-    ("false", {"resolver"}),
+    ("true", {"resolver", "prune_conversations", "collect_1h", "collect_4h", "collect_1d", "collect_1w"}),
+    ("false", {"resolver", "prune_conversations"}),
 ])
 def test_scheduler_jobs(monkeypatch, collector_on, jobs):
     monkeypatch.setenv("COLLECTOR_ENABLED", collector_on)

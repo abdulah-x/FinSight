@@ -31,7 +31,7 @@ from slowapi.util import get_remote_address
 import yfinance as yf
 
 import db
-from graph import MAX_QUERY_CHARS, agent_graph
+from graph import CONVERSATION_STORAGE, MAX_QUERY_CHARS, agent_graph
 from tools import get_economic_calendar
 
 # Our own loggers (finsight, finsight.resolver, finsight.collector) print INFO lines,
@@ -56,6 +56,7 @@ def start_scheduler() -> BackgroundScheduler | None:
     # a few seconds late (a resolver run was lost this way), so allow 5 min and merge backlogs
     scheduler = BackgroundScheduler(timezone="UTC", job_defaults={"misfire_grace_time": 300, "coalesce": True})
     scheduler.add_job(resolver.resolve_due, "interval", minutes=15, id="resolver")
+    scheduler.add_job(db.prune_conversations, "cron", hour=3, minute=30, id="prune_conversations")
     if os.environ.get("COLLECTOR_ENABLED", "").lower() == "true":
         # a few minutes after each bar opens, so the new bar exists in the price data
         scheduler.add_job(collector.collect, "cron", minute=5, args=[["1H"]], id="collect_1h")
@@ -369,7 +370,7 @@ def markets(request: Request, response: Response):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "predictions_storage": db.enabled()}
+    return {"status": "ok", "predictions_storage": db.enabled(), "conversation_storage": CONVERSATION_STORAGE}
 
 
 @app.exception_handler(Exception)

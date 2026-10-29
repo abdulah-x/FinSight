@@ -94,6 +94,23 @@ def record_outcome(prediction_id: int, exit_price: float, correct: bool) -> None
                      (exit_price, correct, prediction_id))
 
 
+def prune_conversations(days: int = 7) -> int:
+    """Delete conversations untouched for `days`: the checkpointer writes rows on every
+    request, so its tables would otherwise grow forever. Returns how many were removed."""
+    if not enabled():
+        return 0
+    with psycopg.connect(_url()) as conn:
+        if not conn.execute("SELECT to_regclass('checkpoints')").fetchone()[0]:
+            return 0  # conversations are kept in memory, not in this database
+        old = [row[0] for row in conn.execute(
+            """SELECT thread_id FROM checkpoints GROUP BY thread_id
+               HAVING max((checkpoint->>'ts')::timestamptz) < now() - make_interval(days => %s)""",
+            (days,)).fetchall()]
+        for table in ("checkpoint_writes", "checkpoint_blobs", "checkpoints"):  # fixed names, not user input
+            conn.execute(f"DELETE FROM {table} WHERE thread_id = ANY(%s)", (old,))
+    return len(old)
+
+
 def resolved_predictions() -> list[dict]:
     """Every graded prediction, for the calibration report."""
     with psycopg.connect(_url()) as conn, conn.cursor(row_factory=psycopg.rows.dict_row) as cur:

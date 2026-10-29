@@ -11,6 +11,8 @@ runs the tools and enforces the caps.
 """
 
 import json
+import logging
+import os
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, wait
@@ -37,6 +39,8 @@ from prompts import (
 )
 from state import AgentState, GuardrailDecision, NewsScores
 from tools import gather_evidence
+
+log = logging.getLogger("finsight")
 
 # --- Hard caps (all in one place) ---
 MAX_QUERY_CHARS = 500      # longer messages are refused before any LLM sees them
@@ -351,7 +355,30 @@ def should_continue(state: AgentState) -> Literal["tool_executor", "finalize", "
     return "finalize" if _turn_evidence(state["messages"]) else END
 
 
-def build_graph():
+def make_checkpointer():
+    """Where conversations live. With DATABASE_URL set: Postgres, so chats and paused
+    questions survive a restart. Otherwise (tests, no database): in process memory.
+    If Postgres can't be reached, fall back to memory rather than refuse to start."""
+    url = os.environ.get("DATABASE_URL")
+    if not url:
+        return MemorySaver()
+    try:
+        from langgraph.checkpoint.postgres import PostgresSaver
+        from psycopg.rows import dict_row
+        from psycopg_pool import ConnectionPool
+
+        # autocommit + dict rows + no prepared statements: what PostgresSaver expects
+        pool = ConnectionPool(url, min_size=1, max_size=10, timeout=5, open=True,
+                              kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row})
+        saver = PostgresSaver(pool)
+        saver.setup()  # creates its tables on first run
+        return saver
+    except Exception:
+        log.exception("Postgres conversation storage unavailable; using in-memory storage")
+        return MemorySaver()
+
+
+def build_graph(checkpointer=None):
     graph = StateGraph(AgentState)
     graph.add_node("guardrail", guardrail)
     graph.add_node("refusal", refusal)
@@ -368,7 +395,8 @@ def build_graph():
     graph.add_edge("finalize", END)
     # The checkpointer saves state after every step, per thread_id. interrupt() needs it
     # (to resume where it paused) and it gives follow-up questions their memory.
-    return graph.compile(checkpointer=MemorySaver()).with_config(recursion_limit=RECURSION_LIMIT)
+    return graph.compile(checkpointer=checkpointer or make_checkpointer()).with_config(recursion_limit=RECURSION_LIMIT)
 
 
 agent_graph = build_graph()
+CONVERSATION_STORAGE = "memory" if isinstance(agent_graph.checkpointer, MemorySaver) else "postgres"

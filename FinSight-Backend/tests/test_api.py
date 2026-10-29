@@ -55,7 +55,7 @@ def test_resume_rate_limit_returns_429_with_retry_after():
 
 
 def test_health_reports_storage_off_without_a_database():
-    assert client.get("/health").json() == {"status": "ok", "predictions_storage": False}
+    assert client.get("/health").json() == {"status": "ok", "predictions_storage": False, "conversation_storage": "memory"}
 
 
 def test_cors_allows_only_the_frontend_origin():
@@ -230,3 +230,35 @@ def test_live_markets_strip():
     assert body["next_event"] is None or body["next_event"]["hours_away"] <= 48
     again = client.get("/markets").json()
     assert again == body   # served from the 60s cache
+
+
+# ---------- conversations in Postgres (survive a restart) ----------
+
+def _restart(graph):
+    """A fresh graph with a fresh checkpointer: what the API has after a restart."""
+    return graph.build_graph(graph.make_checkpointer())
+
+
+@live
+def test_live_conversations_survive_a_restart(test_db):
+    from langchain_core.messages import HumanMessage
+    from langgraph.checkpoint.postgres import PostgresSaver
+    thread = {"configurable": {"thread_id": str(uuid.uuid4())}}
+    before = _restart(graph)
+    assert isinstance(before.checkpointer, PostgresSaver)
+    before.invoke({"messages": [HumanMessage("x" * 501)]}, config=thread)  # refused before any LLM call
+    after = _restart(graph)
+    assert after.get_state(thread).values["messages"][-1].content == graph.REFUSALS["too_long"]
+
+
+@live
+def test_live_old_conversations_are_pruned(test_db):
+    from langchain_core.messages import HumanMessage
+    thread = {"configurable": {"thread_id": str(uuid.uuid4())}}
+    g = _restart(graph)
+    g.invoke({"messages": [HumanMessage("x" * 501)]}, config=thread)
+    with psycopg.connect(test_db) as conn:
+        conn.execute("""UPDATE checkpoints SET checkpoint = jsonb_set(checkpoint, '{ts}', '"2020-01-01T00:00:00+00:00"')
+                        WHERE thread_id = %s""", (thread["configurable"]["thread_id"],))
+    assert db.prune_conversations(days=7) >= 1
+    assert not _restart(graph).get_state(thread).values  # gone
