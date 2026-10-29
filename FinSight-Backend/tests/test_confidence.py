@@ -245,3 +245,12 @@ def test_item_and_group_labels_never_disagree():
 def test_strength_labels(value, label):
     from confidence import _word
     assert _word(value) == label
+
+
+def test_rows_carry_the_breakdown_as_data_for_the_frontend():
+    a = score([ev("price", -1), ev("macro", 1, strength=0.2)], "GC=F", "1D")
+    rows = {r["group"]: r for r in a.rows}
+    assert rows["Price"] == {"group": "Price", "weight": 0.40, "value": -1.0, "label": "bearish", "detail": "x [bearish]"}
+    assert rows["Macro"]["label"] == "weak bullish"
+    assert rows["News"]["value"] is None and rows["News"]["label"] == "missing"
+    assert [r["group"] for r in a.rows] == [line.split(" (")[0] for line in a.breakdown[:len(a.rows)]]

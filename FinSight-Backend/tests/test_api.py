@@ -151,3 +151,16 @@ def test_live_prediction_round_trip(test_db):
                            "FROM predictions WHERE id = %s", (row_id,)).fetchone()
     assert row[:4] == ("GC=F", "Bearish", 4010.4, None)
     assert round(row[4].total_seconds() / 3600) == 4  # graded 4 hours later
+
+
+def test_trace_lists_this_turns_sources_and_which_failed():
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+    old = ToolMessage(content="", name="gather_evidence", tool_call_id="a",
+                      artifact={"args": {}, "output": {"news": {"articles": []}}})
+    now = ToolMessage(content="", name="gather_evidence", tool_call_id="b",
+                      artifact={"args": {}, "output": {"price_action": {"trend": "up"}, "funding": {"error": "451"}}})
+    result = {"messages": [HumanMessage("BTC 4H"), old, AIMessage("answer"), HumanMessage("ETH 4H"), now],
+              "tool_rounds": 1, "follow_up": False}
+    trace = main._trace(result)
+    assert [(s.name, s.ok) for s in trace.sources] == [("price_action", True), ("funding", False)]  # earlier turn ignored
+    assert trace.tool_rounds == 1 and trace.follow_up is False

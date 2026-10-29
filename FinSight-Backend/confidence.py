@@ -70,6 +70,7 @@ class Assessment(BaseModel):
     groups: dict[str, float]
     evidence: list[Evidence]
     breakdown: list[str]  # human-readable lines, shown to the trader
+    rows: list[dict] = []  # the same breakdown as data, for the frontend's bars
 
 
 def asset_class(symbol: str) -> str:
@@ -218,14 +219,17 @@ def score(evidence: list[Evidence], symbol: str, timeframe: str,
     low, high = CONFIG["buckets"]
     bucket = "Low" if value < low else "Medium" if value <= high else "High"
 
-    breakdown = []
+    breakdown, rows = [], []
     for g, w in sorted(expected.items(), key=lambda kv: -kv[1]):
         if g in groups:
             # every item carries its own direction, so a mixed group can't be misread
             reasons = "; ".join(f"{e.rationale} [{_word(e.direction * e.strength)}]" for e in evidence if e.group == g)
             breakdown.append(f"{GROUP_LABELS[g]} ({w:.0%}): {_word(groups[g])} - {reasons}")
+            rows.append({"group": GROUP_LABELS[g], "weight": w, "value": round(groups[g], 3),
+                         "label": _word(groups[g]), "detail": reasons})
         else:
             breakdown.append(f"{GROUP_LABELS[g]} ({w:.0%}): missing")
+            rows.append({"group": GROUP_LABELS[g], "weight": w, "value": None, "label": "missing", "detail": None})
     breakdown.append(f"Coverage {coverage:.0%} of expected evidence")
     if penalty_note:
         breakdown.append(f"Events: {penalty_note}" + (f" (score x{penalty})" if penalty < 1 else ""))
@@ -233,7 +237,7 @@ def score(evidence: list[Evidence], symbol: str, timeframe: str,
     return Assessment(bias=bias, score=value, bucket=bucket, net=round(net, 3),
                       coverage=round(coverage, 2), event_penalty=penalty,
                       groups={g: round(v, 3) for g, v in groups.items()},
-                      evidence=evidence, breakdown=breakdown)
+                      evidence=evidence, breakdown=breakdown, rows=rows)
 
 
 def assess(results: dict, symbol: str, timeframe: str, news_scores: list[dict] | None = None) -> Assessment:

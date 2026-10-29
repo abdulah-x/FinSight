@@ -15,7 +15,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, ToolMessage
 from langgraph.types import Command
 from pydantic import UUID4, BaseModel, Field
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -118,15 +118,37 @@ class ResumeRequest(BaseModel):
     answer: str = Field(min_length=1, max_length=MAX_QUERY_CHARS)
 
 
+class Row(BaseModel):
+    group: str                 # Price, Macro, News, Positioning, Sentiment
+    weight: float              # share of the score, 0..1
+    value: float | None        # -1 bearish .. +1 bullish; None = no evidence this time
+    label: str                 # "weak bullish", "missing", ...
+    detail: str | None
+
+
 class Analysis(BaseModel):
     asset: str
     timeframe: str
     bias: Literal["Bullish", "Bearish", "Neutral"]
     score: int
     bucket: Literal["Low", "Medium", "High"]
+    net: float                 # where the evidence lands, -1..+1 (Neutral inside +-0.15)
     coverage: float
     event_penalty: float
     breakdown: list[str]
+    rows: list[Row] = []
+
+
+class Source(BaseModel):
+    name: str                  # price_action, macro, calendar, ...
+    ok: bool                   # False = the source failed or timed out
+
+
+class Trace(BaseModel):
+    """What the agent did this turn, shown in the page's run log."""
+    sources: list[Source] = []
+    tool_rounds: int = 0
+    follow_up: bool = False    # answered from the previous result, no new evidence
 
 
 class AnalyzeResponse(BaseModel):
@@ -137,9 +159,24 @@ class AnalyzeResponse(BaseModel):
     analysis: Analysis | None = None  # structured bias + score, when a new analysis was made
     cached: bool = False
     stop_reason: str | None = None   # which cap stopped the agent, if any
+    trace: Trace = Trace()
 
 
 # ---------- endpoints ----------
+
+def _trace(result: dict) -> Trace:
+    """Sources the agent fetched this turn (from the tool results' raw copies)."""
+    messages = result.get("messages", [])
+    turn_start = max((i for i, m in enumerate(messages) if isinstance(m, HumanMessage)), default=0)
+    sources = {}
+    for m in messages[turn_start:]:
+        if isinstance(m, ToolMessage) and m.name == "gather_evidence" and m.artifact:
+            output = m.artifact["output"]
+            if "error" not in output:  # the whole call failed (e.g. invalid arguments)
+                sources.update({name: "error" not in out for name, out in output.items()})
+    return Trace(sources=[Source(name=n, ok=ok) for n, ok in sources.items()],
+                 tool_rounds=result.get("tool_rounds") or 0, follow_up=bool(result.get("follow_up")))
+
 
 def _run(graph_input, session_id: str) -> AnalyzeResponse:
     config = {"configurable": {"thread_id": session_id}, "callbacks": callbacks}
@@ -169,6 +206,7 @@ def _run(graph_input, session_id: str) -> AnalyzeResponse:
         analysis=Analysis(**analysis) if analysis else None,
         cached=cached,
         stop_reason=stop_reason,
+        trace=_trace(result),
     )
 
 
