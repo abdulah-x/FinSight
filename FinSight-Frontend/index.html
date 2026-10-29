@@ -57,7 +57,10 @@
       <aside class="log" aria-label="Agent run">
         <div class="log-head"><span class="label">Agent run</span><span class="st-time" id="runTotal"></span></div>
         <ol class="steps" id="steps" aria-live="polite"></ol>
-        <div class="log-foot"><span class="label">Earlier runs</span><ul class="past" id="past"></ul></div>
+        <div class="log-foot">
+          <div class="log-head"><span class="label">Earlier runs</span><button type="button" class="link" id="newChat">New conversation</button></div>
+          <ul class="past" id="past"></ul>
+        </div>
       </aside>
       <main id="result" aria-live="polite"></main>
     </section>

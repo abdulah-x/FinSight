@@ -11,7 +11,7 @@ const SOURCE_NAMES = { price_action: "price action", macro: "macro", calendar: "
                        funding: "funding", news: "news", social: "social" };
 const REQUEST_TIMEOUT_MS = 60000;
 
-const state = { sessionId: null, pending: false, current: null, history: [], busy: false, asset: null, tf: null };
+const state = { sessionId: null, pending: false, question: null, current: null, history: [], busy: false, asset: null, tf: null };
 const $ = (id) => document.getElementById(id);
 
 // ---------- DOM helper ----------
@@ -374,6 +374,7 @@ async function send(path, body, prompt) {
     clearTimeout(timeout);
     if (!done) failed({ status: 0 }, path);
     setBusy(false);
+    saveSession();
   }
 }
 
@@ -400,6 +401,7 @@ function finish(data, prompt) {
 
   if (data.status === "needs_input") {
     state.pending = true;
+    state.question = data.question;
     closeStep();
     run.steps.push({ title: "Needs your input", sub: data.question, status: "ask", quick: true });
     freeze();
@@ -462,6 +464,59 @@ function reopen(run) {
   $("result").replaceChildren(biasCard(state.current));
   state.current = run;
   renderHistory();
+  saveSession();
+}
+
+// ---------- this browser remembers the conversation (refresh-safe) ----------
+// Only a convenience: the conversation itself lives on the server (Postgres), keyed by
+// session id. Storage can be blocked (private windows), so every access is guarded.
+const STORAGE_KEY = "finsight.session.v1";
+const KEEP_RUNS = 10;
+
+function saveSession() {
+  try {
+    const runs = state.history.slice(-KEEP_RUNS).map(({ analysis, prose, cached, qa }) => ({ analysis, prose, cached, qa }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ sessionId: state.sessionId, pending: state.pending, question: state.question,
+      current: state.current ? state.history.indexOf(state.current) - (state.history.length - runs.length) : -1, runs }));
+  } catch { /* storage unavailable: the page still works, it just forgets on refresh */ }
+}
+
+function restoreSession() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null"); } catch { return false; }
+  if (!saved || !saved.sessionId) return false;
+  state.sessionId = saved.sessionId;
+  state.history = Array.isArray(saved.runs) ? saved.runs : [];
+  state.current = state.history[saved.current] || state.history[state.history.length - 1] || null;
+  if (saved.pending && saved.question) {
+    state.pending = true; state.question = saved.question;
+    renderSteps([{ title: "Needs your input", sub: saved.question, status: "ask", quick: true }], null);
+    notice("Waiting for your answer", `${saved.question}
+Pick a timeframe in the run log, or type your answer in the task bar.`);
+    $("task").placeholder = "Type your answer, e.g. 4H";
+    renderHistory();
+  } else if (state.current) {
+    renderSteps([{ title: "Restored your last session", sub: `${assetName(state.current.analysis.asset)} ${state.current.analysis.timeframe}`, status: "done" }], null);
+    showCurrent();
+  } else {
+    return false;
+  }
+  return true;
+}
+
+function newConversation() {
+  if (state.busy) return;
+  Object.assign(state, { sessionId: null, pending: false, question: null, current: null, history: [] });
+  try { localStorage.removeItem(STORAGE_KEY); } catch { /* nothing stored */ }
+  $("task").placeholder = "Give the agent a task, e.g. “Gold daily bias” or “why is it bearish?”";
+  showIdle();
+  $("task").focus();
+}
+
+function showIdle() {
+  renderSteps([{ title: "Ready", sub: "give the agent a task above", status: "wait" }], null);
+  renderHistory();
+  notice("No analysis yet", "Pick an asset and a timeframe, or type a task like “Gold daily bias”. The agent checks the request, gathers the evidence it needs, scores it and explains the result.");
 }
 
 // ---------- start ----------
@@ -478,6 +533,5 @@ drawBg(true);
 loadMarkets();
 setInterval(loadMarkets, MARKETS_REFRESH_MS);
 renderPicks();
-renderSteps([{ title: "Ready", sub: "give the agent a task above", status: "wait" }], null);
-renderHistory();
-notice("No analysis yet", "Pick an asset and a timeframe, or type a task like “Gold daily bias”. The agent checks the request, gathers the evidence it needs, scores it and explains the result.");
+$("newChat").addEventListener("click", newConversation);
+if (!restoreSession()) showIdle();

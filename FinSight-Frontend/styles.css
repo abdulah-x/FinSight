@@ -122,6 +122,9 @@ button { -webkit-tap-highlight-color: transparent }
 .quick button { color: var(--ink); background: var(--surface) }
 @keyframes pulse { 50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 20%, transparent) } }
 .log-foot { border-top: 1px solid var(--line); padding-top: 12px; display: grid; gap: 8px }
+.link { font: 500 11px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--accent); background: none; border: 0;
+  padding: 4px 0; cursor: pointer; text-underline-offset: 3px }
+.link:hover { text-decoration: underline }
 .past { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px }
 .past button { width: calc(100% + 16px); margin-inline: -8px; display: grid; grid-template-columns: 1fr auto; gap: 10px; text-align: left;
   background: none; border: 0; border-radius: 6px; padding: 7px 8px; font: 15px var(--body); color: var(--ink); cursor: pointer;
