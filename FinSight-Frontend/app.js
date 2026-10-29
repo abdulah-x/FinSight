@@ -409,7 +409,6 @@ $("taskForm").addEventListener("submit", (e) => {
   if (state.pending) resume(text); else analyze(text);
 });
 window.addEventListener("resize", drawBg);
-window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", drawBg);
 
 drawBg(true);
 renderPicks();

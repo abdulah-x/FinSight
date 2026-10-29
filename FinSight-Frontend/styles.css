@@ -1,37 +1,24 @@
 /* FinSight Bias Desk
    Layout: full-screen desk. Small hero + one task bar across the top; below, the agent's
    run log on the left and the result on the right. Stacks to one column on phones. */
-/* Colour: OKLCH, so equal lightness numbers look equally bright.
-   - neutrals carry a faint tint of the accent hue (260) so the page reads as one family
-   - bullish green and bearish red share one lightness: neither side looks louder
-   - semantic colours (bull/bear/flat/warn) never double as the accent
-   - dark mode raises lightness and lowers chroma instead of inverting */
+/* Colour: black and gold-yellow, one deliberate dark look (no light theme: yellow text
+   on white can't be read). OKLCH, so equal lightness numbers look equally bright.
+   - neutrals are warm near-blacks, tinted toward the yellow (hue 90) so the page reads as one family
+   - yellow is the only accent: actions, selection, focus, the brand
+   - bullish green and bearish red share one lightness, so neither direction looks louder
+   - warnings are orange (hue 50), far enough from the yellow not to be mistaken for it */
 :root {
-  --bg: oklch(0.972 0.006 260); --surface: oklch(1 0 0); --surface-2: oklch(0.955 0.010 260);
-  --ink: oklch(0.21 0.020 260); --muted: oklch(0.50 0.025 260); --line: oklch(0.90 0.012 260);
-  --accent: oklch(0.50 0.190 264); --accent-hover: oklch(0.44 0.190 264); --accent-soft: oklch(0.50 0.190 264 / 0.10);
-  --on-accent: oklch(0.99 0 0);
-  --bull: oklch(0.54 0.130 158); --bear: oklch(0.54 0.180 27); --flat: oklch(0.55 0.020 260); --warn: oklch(0.55 0.130 70);
+  --bg: oklch(0.145 0.004 90); --surface: oklch(0.19 0.006 90); --surface-2: oklch(0.235 0.008 90);
+  --ink: oklch(0.95 0.010 95); --muted: oklch(0.72 0.014 90); --line: oklch(0.30 0.010 90);
+  --accent: oklch(0.86 0.170 92); --accent-hover: oklch(0.91 0.150 95); --accent-soft: oklch(0.86 0.170 92 / 0.12);
+  --on-accent: oklch(0.17 0.010 90);
+  --bull: oklch(0.75 0.140 158); --bear: oklch(0.75 0.140 25); --flat: oklch(0.72 0.012 90); --warn: oklch(0.75 0.150 50);
   --display: "Instrument Serif", Georgia, "Times New Roman", serif;
   --body: "Times New Roman", Tinos, Times, serif;
   --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Consolas, monospace;
   --r: 10px;
-  color-scheme: light;
+  color-scheme: dark;
 }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
-  --bg: oklch(0.17 0.015 260); --surface: oklch(0.21 0.018 260); --surface-2: oklch(0.255 0.020 260);
-  --ink: oklch(0.94 0.008 260); --muted: oklch(0.72 0.020 260); --line: oklch(0.31 0.020 260);
-  --accent: oklch(0.74 0.130 268); --accent-hover: oklch(0.80 0.110 268); --accent-soft: oklch(0.74 0.130 268 / 0.14);
-  --on-accent: oklch(0.17 0.015 260);
-  --bull: oklch(0.75 0.140 158); --bear: oklch(0.75 0.140 25); --flat: oklch(0.72 0.020 260); --warn: oklch(0.80 0.120 75);
-  color-scheme: dark } }
-:root[data-theme="dark"] {
-  --bg: oklch(0.17 0.015 260); --surface: oklch(0.21 0.018 260); --surface-2: oklch(0.255 0.020 260);
-  --ink: oklch(0.94 0.008 260); --muted: oklch(0.72 0.020 260); --line: oklch(0.31 0.020 260);
-  --accent: oklch(0.74 0.130 268); --accent-hover: oklch(0.80 0.110 268); --accent-soft: oklch(0.74 0.130 268 / 0.14);
-  --on-accent: oklch(0.17 0.015 260);
-  --bull: oklch(0.75 0.140 158); --bear: oklch(0.75 0.140 25); --flat: oklch(0.72 0.020 260); --warn: oklch(0.80 0.120 75);
-  color-scheme: dark }
 
 * { box-sizing: border-box }
 [hidden] { display: none !important }
