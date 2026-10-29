@@ -7,6 +7,7 @@
   <meta name="theme-color" content="#0b0b09">
   <title>FinSight Bias Desk</title>
   <meta name="description" content="An AI agent that reads the evidence for Bitcoin, Ethereum and gold and gives a directional bias with an evidence score.">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&family=Tinos:ital,wght@0,400;0,700;1,400&display=swap">
@@ -18,10 +19,23 @@
   <div class="desk">
     <section class="hero">
       <div>
-        <div class="brand"><span class="logo">Fin<span>Sight</span></span><span class="kicker">AI market agent</span></div>
+        <div class="brand">
+          <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
+            <circle cx="14" cy="14" r="8.5" fill="none" stroke="currentColor" stroke-width="2.2"/>
+            <line x1="20.4" y1="20.4" x2="26" y2="26" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+            <line x1="14" y1="8.2" x2="14" y2="19.8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+            <rect x="11.6" y="10.8" width="4.8" height="6.2" rx="1" fill="currentColor"/>
+          </svg>
+          <span class="logo">Fin<span>Sight</span></span><span class="kicker">AI market agent</span>
+        </div>
         <h1>Ask for a bias. The agent gathers the evidence and shows its work.</h1>
         <p>Direction and evidence for Bitcoin, Ethereum and gold, with the level where the view stops holding. Bias only, never trade calls.</p>
       </div>
+      <aside class="markets" aria-label="Markets now">
+        <div class="mk-head"><span class="label">Markets now</span><span class="mk-time" id="mkTime">loading</span></div>
+        <ul class="mk-list" id="mkList"></ul>
+        <div class="mk-event" id="mkEvent" hidden></div>
+      </aside>
     </section>
 
     <section class="task" aria-label="Give the agent a task">

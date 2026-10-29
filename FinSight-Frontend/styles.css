@@ -33,11 +33,36 @@ button { -webkit-tap-highlight-color: transparent }
 .label { font: 500 11px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted) }
 
 /* hero */
-.brand { display: flex; align-items: baseline; gap: 14px }
+.brand { display: flex; align-items: center; gap: 12px }
+.mark { width: 30px; height: 30px; color: var(--accent); flex: none }
 .logo { font: italic 400 28px/1 var(--display) } .logo span { color: var(--accent) }
 .kicker { font: 500 11px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted) }
 .hero h1 { font: italic 400 clamp(36px, 4vw, 60px)/1.02 var(--display); letter-spacing: -0.01em; margin: 18px 0 12px; max-width: 24ch; text-wrap: balance }
 .hero p { margin: 0; color: var(--muted); max-width: 60ch }
+
+.hero { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 460px); gap: clamp(24px, 4vw, 64px); align-items: end }
+
+/* markets strip: live context beside the headline */
+.markets { background: color-mix(in oklch, var(--surface) 82%, transparent); border: 1px solid var(--line); border-radius: 14px;
+  padding: 14px 16px; display: grid; gap: 8px; backdrop-filter: blur(8px) }
+.mk-head { display: flex; justify-content: space-between; align-items: center }
+.mk-time { font: 11px var(--mono); color: var(--muted) }
+.mk-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px }
+.mk-row { width: calc(100% + 16px); margin-inline: -8px; display: grid; grid-template-columns: minmax(0, 1fr) 96px auto; gap: 14px; align-items: center;
+  padding: 9px 8px; background: none; border: 0; border-radius: 8px; color: var(--ink); font: 16px var(--body); text-align: left; cursor: pointer;
+  transition: background-color .15s }
+.mk-row:hover { background: var(--surface-2) } .mk-row:active { background: var(--accent-soft) }
+.mk-row.off { cursor: default } .mk-row.off:hover { background: none }
+.mk-name small { font: 500 11px var(--mono); color: var(--muted); margin-left: 6px; letter-spacing: .04em }
+.spark { width: 96px; height: 28px; overflow: visible }
+.spark polyline { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke }
+.spark.up { color: var(--bull) } .spark.down { color: var(--bear) }
+.mk-price { display: grid; gap: 2px; text-align: right; font: 500 15px var(--mono); font-variant-numeric: tabular-nums }
+.mk-price small { font: 500 11.5px var(--mono) }
+.mk-err { grid-column: 2 / -1; text-align: right; color: var(--muted); font-style: italic; font-size: 14px }
+.mk-event { border-top: 1px solid var(--line); padding-top: 10px; color: var(--muted); font-size: 14.5px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap }
+.mk-event b { color: var(--ink); font-weight: 400 }
+.mk-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); align-self: center }
 
 /* task bar: the single way to give the agent a job */
 .task { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 12px; display: grid; gap: 10px;
@@ -155,6 +180,8 @@ button { -webkit-tap-highlight-color: transparent }
 
 @media (max-width: 1000px) { .cols { grid-template-columns: 1fr } .groups { border-left: 0; border-top: 1px solid var(--line) } }
 @media (max-width: 820px) { .work { grid-template-columns: 1fr } .log { position: static } }
+@media (max-width: 960px) { .hero { grid-template-columns: 1fr } }
+@media (max-width: 420px) { .mk-row { grid-template-columns: minmax(0, 1fr) 64px auto; gap: 10px } .spark { width: 64px } }
 @media (max-width: 520px) {
   .task form { flex-wrap: wrap } .run { width: 100% }
   .g { grid-template-columns: 1fr 6rem } .g-bar { grid-column: 1 / -1; grid-row: 2 } .g-detail { grid-row: 3 }
@@ -166,8 +193,8 @@ button { -webkit-tap-highlight-color: transparent }
 @keyframes pop { 0% { transform: scale(.6) } 60% { transform: scale(1.15) } 100% { transform: scale(1) } }
 :root { --ease: cubic-bezier(.2, .8, .2, 1) }
 
-.brand, .hero h1, .hero p, .task, .work { animation: rise .7s var(--ease) both }
-.hero h1 { animation-delay: .08s } .hero p { animation-delay: .16s } .task { animation-delay: .24s } .work { animation-delay: .32s }
+.brand, .hero h1, .hero p, .markets, .task, .work { animation: rise .7s var(--ease) both }
+.hero h1 { animation-delay: .08s } .markets { animation-delay: .2s } .hero p { animation-delay: .16s } .task { animation-delay: .24s } .work { animation-delay: .32s }
 
 .st.enter { animation: rise .35s var(--ease) both }
 .st.done .dot { animation: pop .35s var(--ease) }

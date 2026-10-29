@@ -52,11 +52,15 @@ function drawBg(animate = false) {
   const x = c.getContext("2d"); x.scale(dpr, dpr); x.clearRect(0, 0, w, ht);
   const css = getComputedStyle(document.documentElement);
   const muted = css.getPropertyValue("--muted").trim(), accent = css.getPropertyValue("--accent").trim();
-  x.globalAlpha = 0.16; x.fillStyle = muted;
+  x.globalAlpha = 0.22; x.fillStyle = muted;
   for (let gx = 12; gx < w; gx += 28) for (let gy = 12; gy < ht; gy += 28) x.fillRect(gx, gy, 1.2, 1.2);
+  const glow = x.createRadialGradient(w * 0.82, ht * 0.12, 0, w * 0.82, ht * 0.12, Math.max(w, ht) * 0.5);
+  glow.addColorStop(0, accent); glow.addColorStop(1, "transparent");
+  x.globalAlpha = 0.09; x.fillStyle = glow; x.fillRect(0, 0, w, ht);
   let seed = 7; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
   const pts = []; let y = ht * 0.72;
   for (let px = 0; px <= w; px += 6) { y += (rnd() - 0.48) * 14; y = Math.max(ht * 0.45, Math.min(ht * 0.92, y)); pts.push([px, y]); }
+  const candleWicks = Array.from({ length: 16 }, () => rnd() * 10);
   const dots = x.getImageData(0, 0, c.width, c.height);
 
   const paint = (share) => {  // draw the price path up to `share` (0..1) of its length
@@ -67,6 +71,13 @@ function drawBg(animate = false) {
     upto.forEach(([px, py]) => x.lineTo(px, py)); x.lineTo(endX, ht); x.closePath(); x.fill();
     x.globalAlpha = 0.22; x.strokeStyle = accent; x.lineWidth = 1.2; x.beginPath();
     upto.forEach(([px, py], i) => (i ? x.lineTo(px, py) : x.moveTo(px, py))); x.stroke();
+    // faint candles riding the line: one per 4 points, body from open to close, wick past both
+    x.globalAlpha = 0.16; x.fillStyle = accent; x.strokeStyle = accent; x.lineWidth = 1;
+    for (let i = 4; i < upto.length; i += 4) {
+      const [cx, close] = upto[i], open = upto[i - 4][1], wick = 6 + candleWicks[i % candleWicks.length];
+      x.beginPath(); x.moveTo(cx, Math.min(open, close) - wick); x.lineTo(cx, Math.max(open, close) + wick); x.stroke();
+      x.fillRect(cx - 4, Math.min(open, close), 8, Math.max(2, Math.abs(close - open)));
+    }
   };
   if (!animate || reducedMotion()) return paint(1);
   const start = performance.now(), DRAW_MS = 1600;
@@ -76,6 +87,59 @@ function drawBg(animate = false) {
     if (t < 1) requestAnimationFrame(frame);
   };
   requestAnimationFrame(frame);
+}
+
+// ---------- markets strip: live prices from GET /markets (no AI involved) ----------
+const SVG_NS = "http://www.w3.org/2000/svg";
+const MARKETS_REFRESH_MS = 60000;
+const fmtPrice = (v) => v.toLocaleString("en-US", { maximumFractionDigits: v >= 10000 ? 0 : v >= 100 ? 1 : 2 });
+
+function sparkline(values, up) {
+  const w = 96, ht = 28, min = Math.min(...values), span = (Math.max(...values) - min) || 1;
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", `0 0 ${w} ${ht}`);
+  svg.setAttribute("class", `spark ${up ? "up" : "down"}`);
+  svg.setAttribute("aria-hidden", "true");
+  const line = document.createElementNS(SVG_NS, "polyline");
+  line.setAttribute("points", values.map((v, i) => `${(i / (values.length - 1)) * w},${ht - 3 - ((v - min) / span) * (ht - 6)}`).join(" "));
+  svg.append(line);
+  return svg;
+}
+
+function renderMarkets(data) {
+  $("mkList").replaceChildren(...data.assets.map((q) => {
+    const name = assetName(q.symbol);
+    if (q.error) return h("li", {}, h("div", { class: "mk-row off" }, h("span", { class: "mk-name" }, name), h("span", { class: "mk-err" }, "price unavailable")));
+    const up = q.change_pct >= 0;
+    return h("li", {}, h("button", { type: "button", class: "mk-row", title: `Fill in a ${name} task`,
+      onclick: () => {
+        state.asset = q.symbol; state.tf = state.tf || "4H"; renderPicks();
+        $("task").value = `${name} ${state.tf} bias`; $("task").focus();
+      } },
+      h("span", { class: "mk-name" }, name, PICKS[q.symbol] !== name && h("small", {}, PICKS[q.symbol])),
+      q.spark.length > 1 ? sparkline(q.spark, up) : h("span"),
+      h("span", { class: "mk-price" }, fmtPrice(q.last),
+        h("small", { class: up ? "up" : "down" }, `${up ? "▲" : "▼"} ${Math.abs(q.change_pct).toFixed(2)}%`))));
+  }));
+  const ev = data.next_event;
+  $("mkEvent").hidden = !ev;
+  if (ev) $("mkEvent").replaceChildren(h("span", { class: "mk-dot", "aria-hidden": "true" }), "Next high-impact event: ",
+    h("b", {}, ev.event), ` in ${ev.hours_away < 1 ? "under 1h" : Math.round(ev.hours_away) + "h"}`);
+  $("mkTime").textContent = "24h · updated " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+async function loadMarkets() {
+  const ctrl = new AbortController(), t = setTimeout(() => ctrl.abort(), 15000);
+  try {
+    const res = await fetch(API + "/markets", { signal: ctrl.signal });
+    if (!res.ok) throw new Error(String(res.status));
+    renderMarkets(await res.json());
+  } catch {
+    if (!$("mkList").children.length) $("mkList").replaceChildren(h("li", { class: "empty-note" }, "Prices are unavailable right now."));
+    $("mkTime").textContent = "offline";
+  } finally {
+    clearTimeout(t);
+  }
 }
 
 // ---------- quick picks: they only fill in the task bar ----------
@@ -411,6 +475,8 @@ $("taskForm").addEventListener("submit", (e) => {
 window.addEventListener("resize", drawBg);
 
 drawBg(true);
+loadMarkets();
+setInterval(loadMarkets, MARKETS_REFRESH_MS);
 renderPicks();
 renderSteps([{ title: "Ready", sub: "give the agent a task above", status: "wait" }], null);
 renderHistory();
