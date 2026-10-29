@@ -4,12 +4,16 @@
     POST /resume   {session_id, answer}  -> continues a conversation paused by ask_user
     POST /analyze/stream, /resume/stream  -> the same, streamed as server-sent events:
          one event per agent step (for the page's live run log), then the result
+    GET  /markets  -> latest price, 24h change and sparkline per asset, plus the next
+                      high-impact event (no LLM; cached 60s)
     GET  /health
 """
 
 import json
 import logging
 import os
+import threading
+import time
 import uuid
 from contextlib import asynccontextmanager
 from typing import Literal
@@ -24,9 +28,11 @@ from pydantic import UUID4, BaseModel, Field
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
+import yfinance as yf
 
 import db
 from graph import MAX_QUERY_CHARS, agent_graph
+from tools import get_economic_calendar
 
 # Our own loggers (finsight, finsight.resolver, finsight.collector) print INFO lines,
 # e.g. "resolved 4 predictions"; uvicorn only configures its own loggers.
@@ -305,6 +311,60 @@ def resume_stream(request: Request, response: Response, body: ResumeRequest):
     if not (state.tasks and state.tasks[0].interrupts):
         raise HTTPException(status_code=409, detail="This session is not waiting for an answer.")
     return _stream(Command(resume=body.answer), session_id)
+
+
+# ---------- market strip for the page (no LLM, no tokens) ----------
+
+MARKET_SYMBOLS = ["BTC-USD", "ETH-USD", "GC=F"]
+MARKETS_TTL_SECONDS = 60
+_markets = {"at": 0.0, "data": None}
+_markets_lock = threading.Lock()
+
+
+class Quote(BaseModel):
+    symbol: str
+    last: float | None = None
+    change_pct: float | None = None   # vs 24 hourly bars ago
+    spark: list[float] = []           # last 24 hourly closes
+    error: str | None = None
+
+
+class NextEvent(BaseModel):
+    event: str
+    hours_away: float
+
+
+class Markets(BaseModel):
+    assets: list[Quote]
+    next_event: NextEvent | None = None
+
+
+def _quote(symbol: str) -> Quote:
+    try:
+        closes = yf.Ticker(symbol).history(period="5d", interval="1h")["Close"].dropna()
+        if len(closes) < 2:
+            return Quote(symbol=symbol, error="no recent prices")
+        last, day_ago = closes.iloc[-1], closes.iloc[-25] if len(closes) >= 25 else closes.iloc[0]
+        return Quote(symbol=symbol, last=round(float(last), 2), change_pct=round(float((last / day_ago - 1) * 100), 2),
+                     spark=[round(float(c), 2) for c in closes.iloc[-24:]])
+    except Exception:
+        log.exception("quote failed for %s", symbol)
+        return Quote(symbol=symbol, error="price unavailable")
+
+
+def _next_event() -> NextEvent | None:
+    calendar = get_economic_calendar.invoke({"hours_ahead": 48})
+    high = [e for e in calendar.get("events", []) if e["impact"] == "High"]
+    return NextEvent(event=high[0]["event"], hours_away=high[0]["hours_away"]) if high else None
+
+
+@app.get("/markets", response_model=Markets)
+@limiter.limit("30/minute")
+def markets(request: Request, response: Response):
+    with _markets_lock:  # one refresh at a time; everyone else gets the cached copy
+        if _markets["data"] is None or time.time() - _markets["at"] > MARKETS_TTL_SECONDS:
+            _markets.update(at=time.time(), data=Markets(assets=[_quote(s) for s in MARKET_SYMBOLS], next_event=_next_event()))
+        return _markets["data"]
 
 
 @app.get("/health")

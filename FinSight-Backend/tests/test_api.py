@@ -218,3 +218,15 @@ def test_live_stream_reports_a_provider_outage_as_an_error_event(monkeypatch):
     events = _stream_events(client.post("/analyze/stream", json={"query": "gold 1D"}))
     assert events[-1] == {"event": "error", "status": 503, "detail": "The analysis service is busy. Try again in a minute.",
                           "retry_after": "60"}
+
+
+@live
+def test_live_markets_strip():
+    main._markets.update(at=0.0, data=None)
+    body = client.get("/markets").json()
+    assert [q["symbol"] for q in body["assets"]] == ["BTC-USD", "ETH-USD", "GC=F"]
+    for q in body["assets"]:
+        assert q["error"] is None and q["last"] > 0 and 2 <= len(q["spark"]) <= 24 and abs(q["change_pct"]) < 30
+    assert body["next_event"] is None or body["next_event"]["hours_away"] <= 48
+    again = client.get("/markets").json()
+    assert again == body   # served from the 60s cache
