@@ -2,9 +2,12 @@
 
     POST /analyze  {query, session_id?}  -> complete | needs_input | refused
     POST /resume   {session_id, answer}  -> continues a conversation paused by ask_user
+    POST /analyze/stream, /resume/stream  -> the same, streamed as server-sent events:
+         one event per agent step (for the page's live run log), then the result
     GET  /health
 """
 
+import json
 import logging
 import os
 import uuid
@@ -14,7 +17,7 @@ from typing import Literal
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.messages import HumanMessage, ToolMessage
 from langgraph.types import Command
 from pydantic import UUID4, BaseModel, Field
@@ -178,10 +181,17 @@ def _trace(result: dict) -> Trace:
                  tool_rounds=result.get("tool_rounds") or 0, follow_up=bool(result.get("follow_up")))
 
 
-def _run(graph_input, session_id: str) -> AnalyzeResponse:
-    config = {"configurable": {"thread_id": session_id}, "callbacks": callbacks}
-    result = agent_graph.invoke(graph_input, config=config)
+def _config(session_id: str) -> dict:
+    return {"configurable": {"thread_id": session_id}, "callbacks": callbacks}
 
+
+def _run(graph_input, session_id: str) -> AnalyzeResponse:
+    config = _config(session_id)
+    return _finish(agent_graph.invoke(graph_input, config=config), session_id, config)
+
+
+def _finish(result: dict, session_id: str, config: dict) -> AnalyzeResponse:
+    """Final state -> response (shared by the plain and the streamed endpoints)."""
     paused = agent_graph.get_state(config)
     if paused.tasks and paused.tasks[0].interrupts:
         question = paused.tasks[0].interrupts[0].value["question"]
@@ -210,6 +220,58 @@ def _run(graph_input, session_id: str) -> AnalyzeResponse:
     )
 
 
+def _events(update: dict):
+    """One finished graph step -> run-log events for the page. Facts only; the page words them."""
+    for node, out in update.items():
+        if not isinstance(out, dict):  # e.g. LangGraph's own "__interrupt__" marker
+            continue
+        if node == "guardrail":
+            yield {"event": "checked", "category": out.get("guardrail_result"), "asset": out.get("asset"),
+                   "timeframe": out.get("timeframe"), "cached": bool(out.get("cache_hit")),
+                   "follow_up": bool(out.get("follow_up"))}
+        elif node == "agent":
+            message = out["messages"][-1]
+            for call in message.tool_calls:
+                if call["name"] == "gather_evidence":
+                    yield {"event": "planned", "sources": call["args"].get("sources", [])}
+                elif call["name"] == "ask_user":
+                    yield {"event": "asking"}
+            if not message.tool_calls:
+                yield {"event": "agent_done"}  # next: finalize scores and writes, or the turn ends
+        elif node == "tool_executor":
+            sources = {}
+            for m in out["messages"]:
+                if m.name == "gather_evidence" and m.artifact and "error" not in m.artifact["output"]:
+                    sources.update({name: "error" not in res for name, res in m.artifact["output"].items()})
+            if sources:
+                yield {"event": "gathered", "sources": [{"name": n, "ok": ok} for n, ok in sources.items()]}
+
+
+def _sse(event: dict) -> str:
+    return f"data: {json.dumps(event)}\n\n"
+
+
+def _stream(graph_input, session_id: str) -> StreamingResponse:
+    config = _config(session_id)
+
+    def events():
+        try:
+            for update in agent_graph.stream(graph_input, config=config, stream_mode="updates"):
+                for event in _events(update):
+                    yield _sse(event)
+            response = _finish(agent_graph.get_state(config).values, session_id, config)
+            yield _sse({"event": "result", "response": response.model_dump()})
+        except HTTPException as e:  # e.g. 503 when the LLM provider is busy
+            yield _sse({"event": "error", "status": e.status_code, "detail": e.detail,
+                        "retry_after": (e.headers or {}).get("Retry-After")})
+        except Exception:
+            log.exception("stream failed")
+            yield _sse({"event": "error", "status": 500, "detail": "Something went wrong. Please try again."})
+
+    # X-Accel-Buffering: tells a proxy in front of us (nginx) to pass each event through at once
+    return StreamingResponse(events(), media_type="text/event-stream", headers={"X-Accel-Buffering": "no"})
+
+
 @app.post("/analyze", response_model=AnalyzeResponse)
 @limiter.limit(RATE_LIMIT)
 def analyze(request: Request, response: Response, body: AnalyzeRequest):
@@ -226,6 +288,23 @@ def resume(request: Request, response: Response, body: ResumeRequest):
     if not (state.tasks and state.tasks[0].interrupts):  # only a paused conversation can be resumed
         raise HTTPException(status_code=409, detail="This session is not waiting for an answer.")
     return _run(Command(resume=body.answer), session_id)
+
+
+@app.post("/analyze/stream")
+@limiter.limit(RATE_LIMIT)
+def analyze_stream(request: Request, response: Response, body: AnalyzeRequest):
+    session_id = str(body.session_id or uuid.uuid4())
+    return _stream({"messages": [HumanMessage(body.query)]}, session_id)
+
+
+@app.post("/resume/stream")
+@limiter.limit(RATE_LIMIT)
+def resume_stream(request: Request, response: Response, body: ResumeRequest):
+    session_id = str(body.session_id)
+    state = agent_graph.get_state({"configurable": {"thread_id": session_id}})
+    if not (state.tasks and state.tasks[0].interrupts):
+        raise HTTPException(status_code=409, detail="This session is not waiting for an answer.")
+    return _stream(Command(resume=body.answer), session_id)
 
 
 @app.get("/health")

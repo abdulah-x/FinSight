@@ -164,3 +164,57 @@ def test_trace_lists_this_turns_sources_and_which_failed():
     trace = main._trace(result)
     assert [(s.name, s.ok) for s in trace.sources] == [("price_action", True), ("funding", False)]  # earlier turn ignored
     assert trace.tool_rounds == 1 and trace.follow_up is False
+
+
+# ---------- streamed run log ----------
+
+def test_graph_steps_become_run_log_events():
+    from langchain_core.messages import AIMessage, ToolMessage
+    plan = AIMessage(content="", tool_calls=[{"name": "gather_evidence", "id": "c1",
+                                              "args": {"symbol": "GC=F", "timeframe": "1D", "sources": ["price_action", "news"]}}])
+    tools = ToolMessage(content="", name="gather_evidence", tool_call_id="c1",
+                        artifact={"args": {}, "output": {"price_action": {"trend": "up"}, "news": {"error": "down"}}})
+    steps = [
+        {"guardrail": {"guardrail_result": "ok", "asset": "GC=F", "timeframe": "1D", "cache_hit": None, "follow_up": False}},
+        {"agent": {"messages": [plan]}},
+        {"tool_executor": {"messages": [tools], "tool_rounds": 1}},
+        {"agent": {"messages": [AIMessage(content="READY")]}},
+        {"__interrupt__": ()},
+    ]
+    events = [e for update in steps for e in main._events(update)]
+    assert events == [
+        {"event": "checked", "category": "ok", "asset": "GC=F", "timeframe": "1D", "cached": False, "follow_up": False},
+        {"event": "planned", "sources": ["price_action", "news"]},
+        {"event": "gathered", "sources": [{"name": "price_action", "ok": True}, {"name": "news", "ok": False}]},
+        {"event": "agent_done"},
+    ]
+
+
+def test_stream_resume_without_a_pending_question_is_409():
+    assert client.post("/resume/stream", json={"session_id": str(uuid.uuid4()), "answer": "4H"}).status_code == 409
+
+
+def _stream_events(r):
+    import json
+    return [json.loads(line[6:]) for line in r.text.splitlines() if line.startswith("data: ")]
+
+
+@live
+def test_live_stream_sends_each_step_then_the_result(groq_budget):
+    r = client.post("/analyze/stream", json={"query": "ETH 4H bias"})
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/event-stream")
+    events = _stream_events(r)
+    kinds = [e["event"] for e in events]
+    assert kinds[0] == "checked" and kinds[-1] == "result"
+    assert "planned" in kinds and "gathered" in kinds
+    assert kinds.index("planned") < kinds.index("gathered") < kinds.index("result")
+    result = events[-1]["response"]
+    assert result["status"] == "complete" and result["analysis"]["asset"] == "ETH-USD"
+
+
+@live
+def test_live_stream_reports_a_provider_outage_as_an_error_event(monkeypatch):
+    monkeypatch.setattr(graph, "agent_llm", unreachable_groq("openai/gpt-oss-120b").bind_tools(graph.TOOLS))
+    events = _stream_events(client.post("/analyze/stream", json={"query": "gold 1D"}))
+    assert events[-1] == {"event": "error", "status": 503, "detail": "The analysis service is busy. Try again in a minute.",
+                          "retry_after": "60"}
