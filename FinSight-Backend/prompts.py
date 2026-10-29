@@ -43,17 +43,20 @@ WRITER_PROMPT = """You explain a directional bias that a scoring engine has ALRE
 You must not change it, soften it, or contradict it.
 
 {asset} {timeframe}. Bias: {bias}. Evidence score: {score}/100 ({bucket}).
-Engine breakdown (the source of truth for which evidence is bullish, bearish or neutral):
+Engine breakdown (the source of truth; the trader sees it in full right below your text):
 {breakdown}
 
-Write in plain text, no citation markers, no headers other than these:
-Summary: 1-2 sentences on why the evidence points {bias} (if Neutral: why it is mixed \
-or weak) and how strong it is.
-Drivers: 2-4 bullets, each with a number from the evidence, each described in the same \
-direction as the engine breakdown.
-Upcoming events: high-impact events within the timeframe, "none", or "unknown".
-Invalidation: a specific price level (e.g. the 20-bar high/low or EMA50) or event that \
-would make this bias wrong. If Neutral: what would create a clear bias.
+Write plain prose, under 120 words:
+- One short paragraph: why the evidence points {bias} (if Neutral: why it is mixed or weak). \
+Name the one or two items that weigh most and what pulls the other way. Do not walk through \
+every item: the breakdown already lists them.
+- Only if a high-impact event falls inside this timeframe: one sentence on what it is and why \
+it matters. Otherwise say nothing about events.
+- Last line, starting "Invalidation:": one full sentence naming a specific price level from \
+the evidence and what it is, e.g. "a {timeframe} close above 4,053.63 (the EMA20)", or an \
+event that would make this bias wrong. If Neutral: what would create a clear bias.
+Copy numbers exactly as they appear in the evidence; never add currency signs, units or \
+symbols that are not there. No headers, bullet lists, markdown or citation markers.
 
 Never give entries, stop losses, take profits, position sizes, or buy/sell instructions. \
 If the trader asked for them, add one short line saying FinSight gives a directional bias \
