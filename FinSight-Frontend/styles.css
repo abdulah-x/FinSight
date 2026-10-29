@@ -1,10 +1,17 @@
 /* FinSight Bias Desk
    Layout: full-screen desk. Small hero + one task bar across the top; below, the agent's
    run log on the left and the result on the right. Stacks to one column on phones. */
+/* Colour: OKLCH, so equal lightness numbers look equally bright.
+   - neutrals carry a faint tint of the accent hue (260) so the page reads as one family
+   - bullish green and bearish red share one lightness: neither side looks louder
+   - semantic colours (bull/bear/flat/warn) never double as the accent
+   - dark mode raises lightness and lowers chroma instead of inverting */
 :root {
-  --bg: #F3F5F8; --surface: #FFFFFF; --ink: #121722; --muted: #586174; --line: #DCE1E8;
-  --accent: #2446B8; --on-accent: #FFFFFF;
-  --bull: #15795A; --bear: #BE3A32; --flat: #6A7385; --warn: #9A5B00;
+  --bg: oklch(0.972 0.006 260); --surface: oklch(1 0 0); --surface-2: oklch(0.955 0.010 260);
+  --ink: oklch(0.21 0.020 260); --muted: oklch(0.50 0.025 260); --line: oklch(0.90 0.012 260);
+  --accent: oklch(0.50 0.190 264); --accent-hover: oklch(0.44 0.190 264); --accent-soft: oklch(0.50 0.190 264 / 0.10);
+  --on-accent: oklch(0.99 0 0);
+  --bull: oklch(0.54 0.130 158); --bear: oklch(0.54 0.180 27); --flat: oklch(0.55 0.020 260); --warn: oklch(0.55 0.130 70);
   --display: "Instrument Serif", Georgia, "Times New Roman", serif;
   --body: "Times New Roman", Tinos, Times, serif;
   --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Consolas, monospace;
@@ -12,13 +19,19 @@
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
-  --bg: #0E1219; --surface: #161B25; --ink: #E6EAF1; --muted: #98A2B4; --line: #283041;
-  --accent: #86A2FF; --on-accent: #0E1219;
-  --bull: #3DC48E; --bear: #F07268; --flat: #A0A9BA; --warn: #E2A440; color-scheme: dark } }
+  --bg: oklch(0.17 0.015 260); --surface: oklch(0.21 0.018 260); --surface-2: oklch(0.255 0.020 260);
+  --ink: oklch(0.94 0.008 260); --muted: oklch(0.72 0.020 260); --line: oklch(0.31 0.020 260);
+  --accent: oklch(0.74 0.130 268); --accent-hover: oklch(0.80 0.110 268); --accent-soft: oklch(0.74 0.130 268 / 0.14);
+  --on-accent: oklch(0.17 0.015 260);
+  --bull: oklch(0.75 0.140 158); --bear: oklch(0.75 0.140 25); --flat: oklch(0.72 0.020 260); --warn: oklch(0.80 0.120 75);
+  color-scheme: dark } }
 :root[data-theme="dark"] {
-  --bg: #0E1219; --surface: #161B25; --ink: #E6EAF1; --muted: #98A2B4; --line: #283041;
-  --accent: #86A2FF; --on-accent: #0E1219;
-  --bull: #3DC48E; --bear: #F07268; --flat: #A0A9BA; --warn: #E2A440; color-scheme: dark }
+  --bg: oklch(0.17 0.015 260); --surface: oklch(0.21 0.018 260); --surface-2: oklch(0.255 0.020 260);
+  --ink: oklch(0.94 0.008 260); --muted: oklch(0.72 0.020 260); --line: oklch(0.31 0.020 260);
+  --accent: oklch(0.74 0.130 268); --accent-hover: oklch(0.80 0.110 268); --accent-soft: oklch(0.74 0.130 268 / 0.14);
+  --on-accent: oklch(0.17 0.015 260);
+  --bull: oklch(0.75 0.140 158); --bear: oklch(0.75 0.140 25); --flat: oklch(0.72 0.020 260); --warn: oklch(0.80 0.120 75);
+  color-scheme: dark }
 
 * { box-sizing: border-box }
 [hidden] { display: none !important }
@@ -29,6 +42,7 @@ body { background: var(--bg); color: var(--ink); font: 17px/1.55 var(--body) }
   padding-block: 32px 40px; padding-inline: clamp(16px, 4vw, 72px);
   display: grid; grid-template-rows: auto auto 1fr; gap: 28px }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+button { -webkit-tap-highlight-color: transparent }
 .label { font: 500 11px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted) }
 
 /* hero */
@@ -41,18 +55,40 @@ body { background: var(--bg); color: var(--ink); font: 17px/1.55 var(--body) }
 /* task bar: the single way to give the agent a job */
 .task { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 12px; display: grid; gap: 10px;
   box-shadow: 0 1px 2px rgb(0 0 0 / .04), 0 8px 24px -12px rgb(18 23 34 / .12) }
-.task:focus-within { border-color: var(--accent) }
+.task:focus-within { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft), 0 8px 24px -12px rgb(18 23 34 / .12) }
+.task { transition: border-color .15s, box-shadow .15s }
 .task form { display: flex; gap: 10px; align-items: center }
 .task input { flex: 1; min-width: 0; font: 19px/1.4 var(--body); color: var(--ink); background: transparent; border: 0; padding: 10px 8px }
 .task input:focus { outline: none }
 .task input::placeholder { color: var(--muted) }
-.run { font: 600 15px/1 var(--body); color: var(--on-accent); background: var(--accent); border: 0; border-radius: 10px; padding: 13px 22px; cursor: pointer; white-space: nowrap }
-.run:disabled { opacity: .5; cursor: wait }
-.picks { display: flex; gap: 8px 18px; flex-wrap: wrap; align-items: center; padding: 0 8px 4px }
+/* buttons: one primary (Run agent), one secondary style (chips, answers), one quiet (history rows).
+   Every one has hover, press, keyboard focus and disabled states. */
+.run { display: inline-flex; align-items: center; gap: 10px; font: 700 15px/1 var(--body); letter-spacing: .01em;
+  color: var(--on-accent); background: var(--accent); border: 0; border-radius: 10px; padding: 13px 18px 13px 22px;
+  cursor: pointer; white-space: nowrap;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / .18), 0 1px 2px rgb(0 0 0 / .14), 0 8px 18px -8px color-mix(in oklch, var(--accent) 70%, transparent);
+  transition: background-color .15s, transform .15s var(--ease), box-shadow .15s }
+.run:hover { background: var(--accent-hover); transform: translateY(-1px);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / .18), 0 2px 4px rgb(0 0 0 / .14), 0 12px 24px -8px color-mix(in oklch, var(--accent) 75%, transparent) }
+.run:active { transform: translateY(0) scale(.98); box-shadow: inset 0 1px 2px rgb(0 0 0 / .2) }
+.run:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px }
+.run:disabled { cursor: progress; transform: none; background: color-mix(in oklch, var(--accent) 65%, var(--surface)); box-shadow: none }
+.run-icon { width: 16px; height: 16px; transition: transform .15s var(--ease) }
+.run:hover:not(:disabled) .run-icon { transform: translateX(3px) }
+.spinner { display: none; width: 15px; height: 15px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; animation: spin .7s linear infinite }
+.run.busy .spinner { display: block } .run.busy .run-icon { display: none }
+@keyframes spin { to { transform: rotate(360deg) } }
+
+.picks { display: flex; gap: 8px 16px; flex-wrap: wrap; align-items: center; padding: 0 8px 4px }
 .chipset { display: flex; gap: 6px; flex-wrap: wrap }
-.pick { font: 500 13px/1 var(--mono); color: var(--muted); background: var(--bg); border: 1px solid var(--line); border-radius: 999px; padding: 7px 12px; cursor: pointer }
-.pick[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--surface)) }
-.pick:hover { color: var(--ink) }
+.chipset + .chipset { padding-left: 16px; border-left: 1px solid var(--line) }
+.pick, .quick button { font: 500 13px/1 var(--mono); color: var(--muted); background: transparent; border: 1px solid var(--line);
+  border-radius: 999px; padding: 8px 13px; cursor: pointer;
+  transition: color .15s, background-color .15s, border-color .15s, transform .1s }
+.pick:hover, .quick button:hover { color: var(--ink); background: var(--surface-2); border-color: color-mix(in oklch, var(--accent) 35%, var(--line)) }
+.pick:active, .quick button:active { transform: scale(.96) }
+.pick[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); border-color: var(--accent); font-weight: 500 }
+.pick:disabled, .quick button:disabled { opacity: .45; cursor: not-allowed; transform: none }
 
 /* run log */
 .work { display: grid; grid-template-columns: minmax(260px, 320px) minmax(0, 1fr); gap: clamp(24px, 3vw, 48px); align-items: start }
@@ -71,13 +107,15 @@ body { background: var(--bg); color: var(--ink); font: 17px/1.55 var(--body) }
 .st-time { font: 12px var(--mono); color: var(--muted); font-variant-numeric: tabular-nums }
 .st-sub { grid-column: 2 / -1; color: var(--muted); font-size: 14.5px; font-style: italic; overflow-wrap: anywhere }
 .quick { grid-column: 2 / -1; display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap }
-.quick button { font: 500 13px/1 var(--mono); padding: 8px 12px; border-radius: 8px; border: 1px solid var(--warn); background: var(--surface); color: var(--ink); cursor: pointer }
+.quick button { color: var(--ink); background: var(--surface) }
 @keyframes pulse { 50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 20%, transparent) } }
 .log-foot { border-top: 1px solid var(--line); padding-top: 12px; display: grid; gap: 8px }
 .past { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px }
-.past button { width: 100%; display: grid; grid-template-columns: 1fr auto; gap: 10px; text-align: left; background: none; border: 0; border-radius: 6px;
-  padding: 7px 0; font: 15px var(--body); color: var(--ink); cursor: pointer; font-variant-numeric: tabular-nums }
-.past button:hover { color: var(--accent) }
+.past button { width: calc(100% + 16px); margin-inline: -8px; display: grid; grid-template-columns: 1fr auto; gap: 10px; text-align: left;
+  background: none; border: 0; border-radius: 6px; padding: 7px 8px; font: 15px var(--body); color: var(--ink); cursor: pointer;
+  font-variant-numeric: tabular-nums; transition: background-color .15s }
+.past button:hover { background: var(--surface-2) }
+.past button:active { background: var(--accent-soft) }
 .empty-note { color: var(--muted); font-size: 14px; font-style: italic }
 
 /* result card */

@@ -261,7 +261,12 @@ function onEvent(e, prompt, path) {
 let ticker = null;
 function setBusy(busy) {
   state.busy = busy;
-  $("runBtn").disabled = busy;
+  const btn = $("runBtn");
+  btn.disabled = busy;
+  btn.classList.toggle("busy", busy);
+  btn.setAttribute("aria-busy", String(busy));
+  $("runLabel").textContent = busy ? "Running…" : "Run agent";
+  document.querySelectorAll(".pick, .quick button").forEach((b) => { b.disabled = busy; });
   document.querySelector("#result .card")?.classList.toggle("stale", busy);
   clearInterval(ticker);
   if (busy) ticker = setInterval(paintSteps, 100);  // keeps the open step's timer moving
