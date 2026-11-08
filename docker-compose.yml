@@ -29,7 +29,7 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"  # this machine only; the site reaches it through nginx
 
   finsight-frontend:
     build: ./FinSight-Frontend
@@ -38,7 +38,7 @@ services:
     depends_on:
       - finsight-backend
     ports:
-      - "8080:80"
+      - "${FRONTEND_PORT:-8080}:80"
 
 volumes:
   pgdata:
