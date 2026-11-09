@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from prompts import ASSET_NAMES  # noqa: E402
 from resolver import THRESHOLD_ATR, grade  # noqa: E402
 
-SOCIAL_SWITCH = datetime(2026, 11, 9, tzinfo=timezone.utc)
+SOCIAL_SWITCH = datetime(2026, 11, 9, 10, 52, tzinfo=timezone.utc)  # when the server went live with CoinGecko votes
 MIN_SAMPLE = 30  # below this a hit rate is mostly noise (a 50% coin's 95% range is ~32-68% at n=30)
 
 
