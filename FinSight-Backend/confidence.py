@@ -45,7 +45,7 @@ CONFIG = {
     },
     "fear_greed": {"fear": 25, "greed": 75},          # contrarian, only at extremes
     "funding_pct_8h": {"crowded_long": 0.05, "crowded_short": -0.03},  # contrarian, only at extremes
-    "social_min_tagged": 5,                           # fewer tagged posts -> no evidence
+    "community_votes": {"bullish_above": 75, "bearish_below": 45},  # % up; polls lean optimistic, so neutral between
 }
 
 GROUP_LABELS = {"price": "Price", "macro": "Macro", "news": "News",
@@ -160,15 +160,11 @@ def funding_evidence(f: dict) -> list[Evidence]:
 
 
 def social_evidence(s: dict) -> list[Evidence]:
-    tagged = s["bullish"] + s["bearish"]
-    if tagged < CONFIG["social_min_tagged"]:
-        return [Evidence(source="social", group="sentiment", direction=0, strength=0.0,
-                         rationale=f"StockTwits: only {tagged} tagged posts")]
-    lean = (s["bullish"] - s["bearish"]) / tagged
-    direction = _sign(lean) if abs(lean) > 0.3 else 0
+    up, cfg = s["up_pct"], CONFIG["community_votes"]
+    direction = 1 if up > cfg["bullish_above"] else -1 if up < cfg["bearish_below"] else 0
     return [Evidence(source="social", group="sentiment", direction=direction,
-                     strength=round(abs(lean) * 0.5, 2) if direction else 0.0,  # retail chatter: half strength at most
-                     rationale=f"StockTwits {s['bullish']} bullish / {s['bearish']} bearish tags")]
+                     strength=round(abs(up - 50) / 100, 2) if direction else 0.0,  # opinion poll: half strength at most
+                     rationale=f"CoinGecko community votes {up}% up")]
 
 
 def news_evidence(scores: list[dict]) -> list[Evidence]:

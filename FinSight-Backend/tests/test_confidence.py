@@ -104,14 +104,15 @@ def test_normal_funding_is_neutral_not_bearish():
     assert (e.direction, e.strength) == (0, 0.0) and "normal" in e.rationale
 
 
-def test_social_needs_enough_tagged_posts():
-    [e] = social_evidence({"bullish": 3, "bearish": 0})
-    assert e.direction == 0
+def test_community_votes_are_neutral_in_their_usual_range():
+    [e] = social_evidence({"up_pct": 66.0})
+    assert (e.direction, e.strength) == (0, 0.0)
 
 
-def test_social_lean_is_at_most_half_strength():
-    [e] = social_evidence({"bullish": 10, "bearish": 0})
-    assert (e.direction, e.strength) == (1, 0.5)
+@pytest.mark.parametrize("up,direction,strength", [(85.0, 1, 0.35), (30.0, -1, 0.2), (100.0, 1, 0.5)])
+def test_community_votes_count_only_when_lopsided(up, direction, strength):
+    [e] = social_evidence({"up_pct": up})
+    assert (e.direction, e.strength) == (direction, strength)
 
 
 # ---------- news ----------

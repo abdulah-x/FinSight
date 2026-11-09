@@ -31,7 +31,7 @@ from tools import _DEFAULT_NEWS_QUERY, _google_news, gather_evidence  # noqa: E4
 ASSETS = ["BTC-USD", "ETH-USD", "GC=F"]
 SOURCES = {  # everything the engine can use for that asset class (news is fetched separately)
     "crypto": ["price_action", "macro", "calendar", "fear_greed", "funding", "social"],
-    "gold": ["price_action", "macro", "calendar", "social"],
+    "gold": ["price_action", "macro", "calendar"],
 }
 PAUSE_SECONDS = 3  # spread the news-scoring calls under Groq's 8K tokens/minute
 

@@ -69,7 +69,8 @@ strongly the evidence agrees; it is **not** a probability, and the UI must not p
 
 ### Data sources
 yfinance (price, DXY, US10Y, VIX, S&P 500), Forex Factory calendar, alternative.me Fear & Greed,
-Binance funding, Tavily news with Google News RSS fallback, StockTwits. Binance rejects US IPs, so
+Binance funding, Tavily news with Google News RSS fallback, CoinGecko community votes (crypto only;
+StockTwits refuses cloud servers, so gold has no sentiment source). Binance rejects US IPs, so
 **never host in a US region**.
 
 ## API

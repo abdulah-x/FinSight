@@ -10,7 +10,7 @@ How to work:
 Only call it again for a specific follow-up (e.g. a news search on something you found).
 - Pick the sources that matter for the asset and timeframe:
   - Gold: price_action, macro (dollar index, US yields), calendar, news.
-  - Crypto: price_action, fear_greed, funding, calendar, news; social is weak evidence.
+  - Crypto: price_action, fear_greed, funding, social, calendar, news; social is weak evidence.
   - Set calendar_hours to cover the timeframe: 1H -> 4, 4H -> 16, 1D -> 24, 1W -> 168.
   - 1H/4H: near-term events and today's news matter most. 1D/1W: trend and macro matter most.
 - If the timeframe is unknown, call ask_user to ask which one (1H, 4H, 1D or 1W) \

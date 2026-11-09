@@ -17,12 +17,14 @@ Usage:
 import os
 import sys
 from collections import defaultdict
+from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from prompts import ASSET_NAMES  # noqa: E402
 from resolver import THRESHOLD_ATR, grade  # noqa: E402
 
+SOCIAL_SWITCH = datetime(2026, 11, 9, tzinfo=timezone.utc)
 MIN_SAMPLE = 30  # below this a hit rate is mostly noise (a 50% coin's 95% range is ~32-68% at n=30)
 
 
@@ -100,6 +102,12 @@ def report(rows: list[dict]) -> str:
     lines.append("4. By market:")
     for (asset, tf), (h, n) in s["markets"].items():
         lines.append(f"   {asset:<8} {tf:<3} {_rate(h, n)}")
+    newer = [r for r in rows if "created_at" in r and r["created_at"] >= SOCIAL_SWITCH]
+    if newer:  # crypto social evidence changed source here, so old and new aren't strictly comparable
+        s2 = summarize(newer)
+        lines += ["", f"5. Since the switch to CoinGecko votes ({SOCIAL_SWITCH:%Y-%m-%d}):",
+                  f"   {'FinSight':<24} {_rate(s2['hits'], s2['n'])}",
+                  f"   {'follow the EMA trend':<24} {_rate(round(s2['baselines']['follow the EMA trend']), s2['n'])}"]
     return "\n".join(lines)
 
 

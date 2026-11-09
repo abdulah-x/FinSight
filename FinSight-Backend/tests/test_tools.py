@@ -192,18 +192,14 @@ def test_live_google_news_feed():
     assert 1 <= len(articles) <= 5 and all(a["title"] and a["source"] for a in articles)
 
 
-# ---------- get_social_sentiment (StockTwits) ----------
+# ---------- get_social_sentiment (CoinGecko votes) ----------
 
 @live
-@pytest.mark.parametrize("symbol", ASSETS)
-def test_live_social_tally_adds_up(symbol):
-    r = get_social_sentiment.invoke({"symbol": symbol})   # GC=F is looked up as XAUUSD
+@pytest.mark.parametrize("symbol", ["BTC-USD", "ETH-USD"])
+def test_live_community_votes_add_up(symbol):
+    r = get_social_sentiment.invoke({"symbol": symbol})
     assert "error" not in r, r["error"]
-    assert r["symbol"] == symbol and r["posts"] > 0
-    assert r["bullish"] + r["bearish"] + r["untagged"] == r["posts"]
-    assert len(r["samples"]) <= 5
-    for s in filter(None, r["samples"]):
-        assert len(s) <= 150 and "&#39;" not in s and "&amp;" not in s and "\n" not in s
+    assert r["symbol"] == symbol and abs(r["up_pct"] + r["down_pct"] - 100) < 0.5
 
 
 # ---------- gather_evidence ----------

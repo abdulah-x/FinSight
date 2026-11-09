@@ -273,12 +273,10 @@ def score_news(news: dict | None, symbol: str, timeframe: str) -> list[dict] | N
 
 
 def _compact(results: dict) -> dict:
-    """The evidence the writer sees: headlines only for news, no raw social posts."""
+    """The evidence the writer sees: headlines only for news."""
     compact = dict(results)
     if "news" in compact and "articles" in compact["news"]:
         compact["news"] = [a["title"] for a in compact["news"]["articles"]]
-    if "social" in compact and "samples" in compact["social"]:
-        compact["social"] = {k: v for k, v in compact["social"].items() if k != "samples"}
     return compact
 
 
