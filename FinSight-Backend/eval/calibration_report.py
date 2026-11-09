@@ -20,6 +20,7 @@ from collections import defaultdict
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from prompts import ASSET_NAMES  # noqa: E402
 from resolver import THRESHOLD_ATR, grade  # noqa: E402
 
 MIN_SAMPLE = 30  # below this a hit rate is mostly noise (a 50% coin's 95% range is ~32-68% at n=30)
@@ -108,7 +109,7 @@ if __name__ == "__main__":
     load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
     import db
 
-    rows = db.resolved_predictions()
+    rows = [r for r in db.resolved_predictions() if r["asset"] in ASSET_NAMES]  # dropped assets (Solana) stay stored, uncounted
     if len(sys.argv) > 1:
         rows = [r for r in rows if r["source"] == sys.argv[1]]
     print(report(rows))

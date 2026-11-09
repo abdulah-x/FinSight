@@ -101,20 +101,20 @@ A call is correct if price moved more than 0.25 ATR in the predicted direction, 
 inside that band.
 
 ## Evaluation status
-`docker exec finsight-backend python eval/calibration_report.py` on 2026-11-09, 187 graded calls:
+`docker exec finsight-backend python eval/calibration_report.py` on 2026-11-09, 167 graded calls (dropped assets such as Solana are stored but not counted):
 
 | | Hit rate |
 |---|---|
-| FinSight | 28.3% |
-| Follow the EMA trend | 30.5% |
-| Always Bullish | 32.1% |
-| Coin flip (bull/bear) | 40.6% |
-| Medium bucket (n=46) / Low bucket (n=141) / High bucket (n=0) | 34.8% / 26.2% / none |
+| FinSight | 31.1% |
+| Follow the EMA trend | 32.3% |
+| Always Bullish | 32.3% |
+| Coin flip (bull/bear) | 40.7% |
+| Medium bucket (n=43) / Low bucket (n=124) / High bucket (n=0) | 37.2% / 29.0% / none |
 
 The engine **does not beat its baselines yet**. The report's "Score meaningful? YES" only compares
-bucket order. Medium vs Low is not statistically significant at this sample size (z about 1.1), and
-overlapping market conditions make samples correlated. Most samples are 1H; the sample includes old
-Solana rows. Keep collecting before tuning weights.
+bucket order. Medium vs Low is not statistically significant at this sample size (z about 1.0), and
+overlapping market conditions make samples correlated. Most samples are 1H. Keep collecting before
+tuning weights.
 
 `eval/run_eval.py` checks trajectories on the golden set; the pass baseline is in `eval/baseline.txt`.
 
