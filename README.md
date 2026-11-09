@@ -1,55 +1,40 @@
 # FinSight
 
-Ask about a stock or crypto in plain English — get a real answer back.
+Ask which way Bitcoin, Ethereum or Gold is leaning, and get a clear answer with the evidence behind it.
 
-Type something like "how's Tesla doing?" or "give me a report on Bitcoin," and FinSight
-fetches live price data, recent news, and real investor chatter, then writes you either a
-quick one-line answer or a full research report, depending on what you asked for. It also
-remembers what you talked about, so you can follow up with "now compare it to Apple" and
-it'll know what "it" means.
+Type something like "Gold 1D" or "what's the bias on Bitcoin this week?". FinSight goes and checks live prices, the US dollar and interest rates, upcoming economic news, crypto market mood and recent headlines. It then tells you whether the evidence leans **Bullish, Bearish or Neutral**, how strongly it agrees, and what would prove that view wrong.
 
-This is a demo project built to show off **LangChain** and **LangGraph** (two frameworks for
-building AI agents) — not a polished, production-ready app. See [CLAUDE.md](./CLAUDE.md) for
-the full technical breakdown.
+You can watch it work step by step, and ask follow-up questions like "why?".
 
-## What it can do
+**FinSight gives a market view, not trade signals.** It will never tell you where to buy, sell or place a stop. Nothing here is financial advice.
 
-- **Quick answers** — "what's the latest news on Tesla?"
-- **Full reports** — "analyze NVDA" → summary, key metrics, news, sentiment, sources
-- **Crypto too** — "Ethereum," "Dogecoin," not just stocks
-- **Follow-up questions** — it remembers the conversation
-- **Politely declines** anything that isn't about a stock or crypto asset
+## What it covers
 
-## Tech stack
+- **Markets:** Bitcoin, Ethereum and Gold
+- **Timeframes:** 1 hour, 4 hours, 1 day and 1 week
 
-| Layer | Tech |
-|---|---|
-| Agent orchestration | [LangGraph](https://github.com/langchain-ai/langgraph) — explicit `StateGraph` with conditional routing + `MemorySaver` session memory |
-| LLM tooling | [LangChain](https://github.com/langchain-ai/langchain) — tool wrapping, structured output |
-| LLM | [Groq](https://groq.com/) (`llama-3.3-70b-versatile`) |
-| Market data | [`yfinance`](https://github.com/ranaroussi/yfinance) |
-| News search | [Tavily](https://tavily.com/) (`langchain-tavily`) |
-| Social sentiment | StockTwits public API |
-| Backend API | [FastAPI](https://fastapi.tiangolo.com/) |
-| Frontend | Static HTML/JS chat UI served via nginx |
-| Deployment | Docker Compose (backend + frontend containers) |
+## How good is it?
 
-See [CLAUDE.md](./CLAUDE.md) for the full architecture and design rationale.
+FinSight grades its own past calls against what the price actually did, and we publish the result even when it isn't flattering.
 
-## Try it
+As of November 2026, across 187 graded calls, **it was right 28% of the time. That is not yet better than simple rules** like following the recent trend (31%). Most of those calls are short-term, and the sample is still small. Please treat FinSight as a way to see the evidence in one place, not as a prediction you can rely on.
 
-Requires a free [Groq API key](https://console.groq.com/) and [Tavily API key](https://tavily.com/).
+## Try it yourself
+
+You need [Docker](https://www.docker.com/) and two free keys, from [Groq](https://console.groq.com/) and [Tavily](https://tavily.com/).
 
 ```bash
 git clone https://github.com/abdulah-x/FinSight.git
 cd FinSight
 cp .env.example .env
-# add your GROQ_API_KEY and TAVILY_API_KEY to .env
+# Open .env, add your two keys, and choose a database password
 docker compose up --build
 ```
 
-This starts two containers:
-- **backend** (FastAPI + LangChain/LangGraph agent) — `http://localhost:8000`
-- **frontend** (chat UI via nginx) — `http://localhost:8080`
+Then open http://localhost:8080.
 
-Open `http://localhost:8080` and ask about any company or crypto asset (e.g. "Apple", "AAPL", "Bitcoin").
+It runs on free services, so if lots of questions arrive at once you may be asked to wait a minute.
+
+---
+
+Developers: the full technical details are in [CLAUDE.md](./CLAUDE.md).
