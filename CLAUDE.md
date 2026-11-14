@@ -102,20 +102,23 @@ A call is correct if price moved more than 0.25 ATR in the predicted direction, 
 inside that band.
 
 ## Evaluation status
-`docker exec finsight-backend python eval/calibration_report.py` on 2026-11-09, 167 graded calls (dropped assets such as Solana are stored but not counted):
+`docker exec finsight-backend python eval/calibration_report.py` on 2026-11-14, 627 graded calls (dropped assets such as Solana are stored but not counted):
 
 | | Hit rate |
 |---|---|
-| FinSight | 31.1% |
-| Follow the EMA trend | 32.3% |
-| Always Bullish | 32.3% |
-| Coin flip (bull/bear) | 40.7% |
-| Medium bucket (n=43) / Low bucket (n=124) / High bucket (n=0) | 37.2% / 29.0% / none |
+| FinSight | 38.0% |
+| Coin flip (bull/bear) | 36.5% |
+| Follow the EMA trend | 36.4% |
+| Always Bullish | 28.4% |
+| Always Neutral | 27.0% |
+| High bucket (n=53) / Medium (n=273) / Low (n=301) | 34.0% / 41.4% / 35.5% |
 
-The engine **does not beat its baselines yet**. The report's "Score meaningful? YES" only compares
-bucket order. Medium vs Low is not statistically significant at this sample size (z about 1.0), and
-overlapping market conditions make samples correlated. Most samples are 1H. Keep collecting before
-tuning weights.
+The lead over the trend baseline is 10 calls (238 vs 228), well within noise. The score **does not
+rank accuracy** (High < Medium). 435 of 627 calls were Bearish (43.2% right) during weeks when prices
+mostly fell (always-Bullish 28.4%), so the hit rate partly reflects the regime. Neutral calls are the
+weakest (25.4%). Gold has no trades from Friday evening to Sunday evening UTC, so its calls due then
+are graded at Sunday's open. Most samples are 1H (460 of 627); 1D/1W have 36. Keep collecting before
+tuning weights; the Neutral band is the first suspect.
 
 `eval/run_eval.py` checks trajectories on the golden set; the pass baseline is in `eval/baseline.txt`.
 
