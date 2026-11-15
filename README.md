@@ -19,6 +19,12 @@ FinSight grades its own past calls against what the price actually did, and we p
 
 As of 14 November 2026, across 627 graded calls, **it was right 38% of the time, only slightly ahead of simple rules** like following the recent trend (36%). Prices mostly fell in those weeks and FinSight mostly said Bearish, so a different market could look very different. Most calls are short-term, and the sample is still small. Please treat FinSight as a way to see the evidence in one place, not as a prediction you can rely on.
 
+## How it's checked
+
+- **Every call is graded automatically.** The server saves each call, checks the price once the hour, day or week is over, and compares FinSight with simple rules such as "follow the trend" and "always say Bullish".
+- **Test questions, including tricky ones.** A fixed set of questions is run against the real agent. Some are designed to trip it up: asking where to buy, stating something false, going off-topic or trying to override its instructions. A second AI model then checks that each written explanation matches the evidence.
+- **The score comes from code, not the AI.** The AI chooses what to look up and writes the explanation, but the Bullish, Bearish or Neutral call and the score are calculated by fixed rules. The same evidence always gives the same answer.
+
 ## Try it yourself
 
 You need [Docker](https://www.docker.com/) and two free keys, from [Groq](https://console.groq.com/) and [Tavily](https://tavily.com/).
