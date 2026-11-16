@@ -17,7 +17,7 @@ You can watch it work step by step, and ask follow-up questions like "why?".
 
 FinSight grades its own past calls against what the price actually did, and we publish the result even when it isn't flattering.
 
-As of 14 November 2026, across 627 graded calls, **it was right 38% of the time, only slightly ahead of simple rules** like following the recent trend (36%). Prices mostly fell in those weeks and FinSight mostly said Bearish, so a different market could look very different. Most calls are short-term, and the sample is still small. Please treat FinSight as a way to see the evidence in one place, not as a prediction you can rely on.
+As of 16 November 2026, across 769 graded calls, **it was right 38% of the time, only slightly ahead of simple rules** like following the recent trend (37%). Prices mostly fell in those weeks and FinSight mostly said Bearish, so a different market could look very different. Most calls are short-term, and the sample is still small. Please treat FinSight as a way to see the evidence in one place, not as a prediction you can rely on.
 
 ## How it's checked
 
