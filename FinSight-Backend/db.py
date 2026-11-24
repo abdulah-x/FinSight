@@ -111,6 +111,19 @@ def prune_conversations(days: int = 7) -> int:
     return len(old)
 
 
+def minutes_since_last_prediction() -> int | None:
+    """Age of the newest prediction, for /health: the outside monitor uses it to spot a
+    collector that stopped while the site stays up. None if storage is off, empty or down."""
+    if not enabled():
+        return None
+    try:
+        with psycopg.connect(_url(), connect_timeout=3) as conn:
+            age = conn.execute("SELECT extract(epoch FROM now() - max(created_at)) FROM predictions").fetchone()[0]
+    except psycopg.Error:
+        return None
+    return None if age is None else int(age // 60)
+
+
 def resolved_predictions() -> list[dict]:
     """Every graded prediction, for the calibration report."""
     with psycopg.connect(_url()) as conn, conn.cursor(row_factory=psycopg.rows.dict_row) as cur:

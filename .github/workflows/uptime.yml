@@ -1,0 +1,42 @@
+# Outside check: runs on GitHub's servers, so it still reports when the FinSight server is down
+# (the backend's own Discord alerts can't). A failed run emails the repo owner.
+name: Uptime
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"   # GitHub may start scheduled runs a few minutes late
+  workflow_dispatch:          # "Run workflow" button, for a manual check
+
+permissions: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Site answers and the collector is still saving predictions
+        env:
+          URL: http://139.185.33.97/api/health
+          MAX_AGE_MINUTES: 120     # the collector saves every hour, so 2 h means it stopped
+        run: |
+          body=$(curl -sS --fail --max-time 20 --retry 3 --retry-delay 20 --retry-all-errors "$URL") \
+            || { echo "::error::FinSight is not answering at $URL"; exit 1; }
+          echo "$body"
+          age=$(echo "$body" | jq -r '.last_prediction_minutes_ago')
+          if [ "$age" = "null" ]; then
+            echo "::error::FinSight is up but can't read its predictions database"; exit 1
+          fi
+          if [ "$age" -gt "$MAX_AGE_MINUTES" ]; then
+            echo "::error::No new prediction for $age minutes: the collector has stopped"; exit 1
+          fi
+          echo "OK: site up, last prediction $age minutes ago"
+
+      - name: Tell Discord
+        if: failure()
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}   # optional; without it, only the email goes out
+        run: |
+          [ -n "$WEBHOOK" ] || exit 0
+          run="https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          curl -sS -H "Content-Type: application/json" \
+            -d "{\"content\":\"FinSight uptime check failed. Details: $run\"}" "$WEBHOOK"

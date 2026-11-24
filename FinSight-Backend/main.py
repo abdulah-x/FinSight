@@ -375,7 +375,8 @@ def markets(request: Request, response: Response):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "predictions_storage": db.enabled(), "conversation_storage": CONVERSATION_STORAGE}
+    return {"status": "ok", "predictions_storage": db.enabled(), "conversation_storage": CONVERSATION_STORAGE,
+            "last_prediction_minutes_ago": db.minutes_since_last_prediction()}
 
 
 @app.exception_handler(Exception)

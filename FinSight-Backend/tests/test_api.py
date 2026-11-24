@@ -55,7 +55,8 @@ def test_resume_rate_limit_returns_429_with_retry_after():
 
 
 def test_health_reports_storage_off_without_a_database():
-    assert client.get("/health").json() == {"status": "ok", "predictions_storage": False, "conversation_storage": "memory"}
+    assert client.get("/health").json() == {"status": "ok", "predictions_storage": False, "conversation_storage": "memory",
+                                            "last_prediction_minutes_ago": None}
 
 
 def test_cors_allows_only_the_frontend_origin():
@@ -137,6 +138,12 @@ def test_live_analyze_rate_limit_returns_429():
 @live
 def test_live_health_reports_storage_on(test_db):
     assert client.get("/health").json()["predictions_storage"] is True
+
+
+@live
+def test_live_health_reports_none_when_the_database_is_down(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://finsight:x@127.0.0.1:1/finsight")  # nothing listens there
+    assert client.get("/health").json()["last_prediction_minutes_ago"] is None
 
 
 @live
