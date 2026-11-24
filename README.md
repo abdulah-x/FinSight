@@ -26,6 +26,8 @@ As of 24 November 2026, across 1,456 graded calls, **it was right 39% of the tim
 - **It's watched around the clock.** Every 30 minutes a check from outside the server makes sure the site is answering and still saving new calls, and sends an email if not.
 - **The score comes from code, not the AI.** The AI chooses what to look up and writes the explanation, but the Bullish, Bearish or Neutral call and the score are calculated by fixed rules. The same evidence always gives the same answer.
 
+![FinSight uptime over the last 7 days: how fast the site answered each check, with failed checks in red](https://raw.githubusercontent.com/abdulah-x/FinSight/uptime-data/uptime.svg)
+
 ## Try it yourself
 
 You need [Docker](https://www.docker.com/) and two free keys, from [Groq](https://console.groq.com/) and [Tavily](https://tavily.com/).

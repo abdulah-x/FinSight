@@ -1,5 +1,7 @@
 # Outside check: runs on GitHub's servers, so it still reports when the FinSight server is down
 # (the backend's own Discord alerts can't). A failed run emails the repo owner.
+# Each run also adds a line to uptime.csv on the `uptime-data` branch and redraws the README chart
+# there, so main's history stays clean.
 name: Uptime
 
 on:
@@ -7,7 +9,12 @@ on:
     - cron: "*/30 * * * *"   # GitHub may start scheduled runs a few minutes late
   workflow_dispatch:          # "Run workflow" button, for a manual check
 
-permissions: {}
+permissions:
+  contents: write             # to update the uptime-data branch
+
+concurrency:
+  group: uptime               # one run at a time, so two runs never push at once
+  cancel-in-progress: false
 
 jobs:
   check:
@@ -15,20 +22,27 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Site answers and the collector is still saving predictions
+        id: check
         env:
           URL: http://139.185.33.97/api/health
           MAX_AGE_MINUTES: 120     # the collector saves every hour, so 2 h means it stopped
         run: |
-          body=$(curl -sS --fail --max-time 20 --retry 3 --retry-delay 20 --retry-all-errors "$URL") \
-            || { echo "::error::FinSight is not answering at $URL"; exit 1; }
-          echo "$body"
+          ok=0; ms=""
+          record() { echo "ok=$ok" >> "$GITHUB_OUTPUT"; echo "ms=$ms" >> "$GITHUB_OUTPUT"; }
+          out=$(curl -sS --fail --max-time 20 --retry 3 --retry-delay 20 --retry-all-errors \
+                  -w '\n%{time_total}' "$URL") \
+            || { record; echo "::error::FinSight is not answering at $URL"; exit 1; }
+          body=$(echo "$out" | head -n -1)
+          ms=$(echo "$out" | tail -n 1 | awk '{printf "%.0f", $1 * 1000}')
+          echo "$body  (${ms} ms)"
           age=$(echo "$body" | jq -r '.last_prediction_minutes_ago')
           if [ "$age" = "null" ]; then
-            echo "::error::FinSight is up but can't read its predictions database"; exit 1
+            record; echo "::error::FinSight is up but can't read its predictions database"; exit 1
           fi
           if [ "$age" -gt "$MAX_AGE_MINUTES" ]; then
-            echo "::error::No new prediction for $age minutes: the collector has stopped"; exit 1
+            record; echo "::error::No new prediction for $age minutes: the collector has stopped"; exit 1
           fi
+          ok=1; record
           echo "OK: site up, last prediction $age minutes ago"
 
       - name: Tell Discord
@@ -40,3 +54,24 @@ jobs:
           run="https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           curl -sS -H "Content-Type: application/json" \
             -d "{\"content\":\"FinSight uptime check failed. Details: $run\"}" "$WEBHOOK"
+
+      - uses: actions/checkout@v4
+        if: always()
+
+      - name: Save the result and redraw the README chart
+        if: always() && steps.check.outputs.ok != ''
+        env:
+          OK: ${{ steps.check.outputs.ok }}
+          MS: ${{ steps.check.outputs.ms }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch --depth 1 origin uptime-data
+          git worktree add data FETCH_HEAD
+          echo "$(date -u +%Y-%m-%dT%H:%M:%S+00:00),$MS,$OK" >> data/uptime.csv
+          python3 .github/scripts/uptime_chart.py data/uptime.csv data/uptime.svg
+          cd data
+          git add uptime.csv uptime.svg
+          # One commit, replaced each time, so the branch never piles up thousands of commits.
+          git commit -q --amend -m "Uptime data (updated by the Uptime workflow)"
+          git push -q --force origin HEAD:uptime-data
