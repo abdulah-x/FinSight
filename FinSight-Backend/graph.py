@@ -86,6 +86,19 @@ news_llm = ChatGroq(
 
 LLM_BUSY = "Sorry, the analysis service is busy right now. Please try again in a minute."
 
+
+def invoke_structured(llm, messages):
+    """Structured output is a forced tool call. gpt-oss-20b now and then misspells the tool's name
+    (e.g. 'newsScores' for 'NewsScores') and Groq rejects the reply with a 400 'tool_use_failed'.
+    The slip is random (about 1 in 300 calls), so one retry is enough; other errors are raised."""
+    try:
+        return llm.invoke(messages)
+    except Exception as e:
+        if "tool_use_failed" not in str(e):
+            raise
+        log.warning("structured output rejected (%s), retrying once", type(e).__name__)
+        return llm.invoke(messages)
+
 # Shared pool: a hung tool keeps its thread, but we never wait for it (no pool shutdown).
 _pool = ThreadPoolExecutor(max_workers=MAX_CALLS_PER_ROUND * 2)
 
@@ -169,7 +182,7 @@ def guardrail(state: AgentState) -> dict:
         return {**turn, "guardrail_result": "too_long"}
     prompt = GUARDRAIL_PROMPT.format(asset=state.get("asset"), timeframe=state.get("timeframe"))
     try:
-        decision = guardrail_llm.invoke([SystemMessage(prompt), HumanMessage(query)])
+        decision = invoke_structured(guardrail_llm, [SystemMessage(prompt), HumanMessage(query)])
     except Exception as e:  # fail closed: if we can't check it, we don't run it
         log.error("guardrail LLM call failed, request refused: %s", e)
         return {**turn, "guardrail_result": "error"}
@@ -264,7 +277,7 @@ def score_news(news: dict | None, symbol: str, timeframe: str) -> list[dict] | N
     prompt = NEWS_SCORING_PROMPT.format(asset=ASSET_NAMES[symbol], timeframe=timeframe)
     data = '<untrusted_data source="news">\n' + "\n".join(lines) + "\n</untrusted_data>"
     try:
-        result = news_llm.invoke([SystemMessage(prompt), HumanMessage(data)])
+        result = invoke_structured(news_llm, [SystemMessage(prompt), HumanMessage(data)])
     except Exception as e:
         log.error("news scoring failed, news counted as missing: %s", e)
         return None

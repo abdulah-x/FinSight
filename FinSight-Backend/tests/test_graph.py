@@ -114,6 +114,33 @@ def test_an_answer_without_evidence_ends_the_turn():
     assert graph.should_continue(state(AIMessage(content="I need an asset and timeframe."))) == "__end__"
 
 
+class Flaky:
+    """Fails with the given error on the first call, then answers."""
+
+    def __init__(self, error):
+        self.error, self.calls = error, 0
+
+    def invoke(self, messages):
+        self.calls += 1
+        if self.calls == 1:
+            raise self.error
+        return "ok"
+
+
+def test_a_misnamed_structured_output_tool_is_retried_once():
+    # Groq's real 400 text when gpt-oss-20b called 'newsScores' instead of 'NewsScores'.
+    llm = Flaky(RuntimeError("Error code: 400 - {'error': {'type': 'invalid_request_error', "
+                             "'code': 'tool_use_failed'}}"))
+    assert graph.invoke_structured(llm, []) == "ok" and llm.calls == 2
+
+
+def test_other_structured_output_errors_are_not_retried():
+    llm = Flaky(TimeoutError("read timed out"))
+    with pytest.raises(TimeoutError):
+        graph.invoke_structured(llm, [])
+    assert llm.calls == 1
+
+
 # ---------- live: the whole graph on Groq and real data ----------
 
 def run(query=None, thread=None, resume=None):
