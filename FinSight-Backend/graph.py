@@ -74,6 +74,16 @@ llm = ChatGroq(
 )
 # bind_tools attaches the tools' menu cards (JSON schemas) to every request.
 agent_llm = llm.bind_tools(TOOLS)
+# The writer runs last, after the agent has used most of the minute's 8K-token budget, so a 429
+# there usually clears within seconds. More retries (the client waits as Groq's Retry-After says)
+# keep the explanation instead of dropping it; evidence gathering is already done by then.
+writer_llm = ChatGroq(
+    model="openai/gpt-oss-120b",
+    temperature=0,
+    model_kwargs={"reasoning_effort": "low"},
+    timeout=LLM_TIMEOUT_SECONDS,
+    max_retries=3,
+)
 
 # The guardrail runs on the small model: cheaper, faster, and its own rate-limit bucket.
 guardrail_llm = ChatGroq(
@@ -301,7 +311,7 @@ def _write_answer(assessment: Assessment, symbol: str, timeframe: str, results: 
                                   breakdown="\n".join(f"- {line}" for line in assessment.breakdown))
     data = f'<untrusted_data source="evidence">\n{json.dumps(_compact(results), default=str)}\n</untrusted_data>'
     try:
-        response = llm.invoke([SystemMessage(prompt), HumanMessage(data)])
+        response = writer_llm.invoke([SystemMessage(prompt), HumanMessage(data)])
         explanation, usage = response.content.strip(), response.usage_metadata
     except Exception as e:
         log.error("writer LLM call failed, answer sent without explanation: %s", e)

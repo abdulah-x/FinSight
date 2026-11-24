@@ -265,7 +265,7 @@ def test_live_round_cap_answers_without_evidence(monkeypatch, groq_budget):
 
 @live
 def test_live_writer_and_news_scorer_outage_still_returns_the_computed_bias(monkeypatch, groq_budget):
-    monkeypatch.setattr(graph, "llm", unreachable_groq("openai/gpt-oss-120b"))   # the agent keeps its own client
+    monkeypatch.setattr(graph, "writer_llm", unreachable_groq("openai/gpt-oss-120b"))  # the agent keeps its own client
     monkeypatch.setattr(graph, "news_llm", unreachable_groq().with_structured_output(graph.NewsScores))
     result = run("ETH 4H bias")
     a, answer = result["analysis"], result["messages"][-1].content
