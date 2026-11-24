@@ -79,7 +79,7 @@ StockTwits refuses cloud servers, so gold has no sentiment source). Binance reje
 | `POST /analyze`, `POST /analyze/stream` | Run an analysis (JSON or SSE) |
 | `POST /resume`, `POST /resume/stream` | Answer an `ask_user` pause; 409 if nothing is pending |
 | `GET /markets` | Quotes and next event; no LLM, cached 60 s, 30/min |
-| `GET /health` | Status and which storage is active |
+| `GET /health` | Status, which storage is active, minutes since the last prediction |
 
 SSE events: `checked`, `planned`, `asking`, `gathered`, `agent_done`, then `result` or `error`. The
 client reads them from a POST with `fetch`. The site calls the API at `/api/`; nginx proxies it, so
@@ -102,25 +102,35 @@ A call is correct if price moved more than 0.25 ATR in the predicted direction, 
 inside that band.
 
 ## Evaluation status
-`docker exec finsight-backend python eval/calibration_report.py` on 2026-11-16, 769 graded calls (dropped assets such as Solana are stored but not counted):
+`docker exec finsight-backend python eval/calibration_report.py` on 2026-11-24, 1,456 graded calls (dropped assets such as Solana are stored but not counted):
 
 | | Hit rate |
 |---|---|
-| FinSight | 38.4% |
-| Coin flip (bull/bear) | 36.7% |
-| Follow the EMA trend | 36.9% |
-| Always Bullish | 28.7% |
-| Always Neutral | 26.8% |
-| High bucket (n=59) / Medium (n=347) / Low (n=363) | 32.2% / 39.8% / 38.0% |
+| FinSight | 38.7% |
+| Follow the EMA trend | 38.7% |
+| Coin flip (bull/bear) | 35.9% |
+| Always Bullish | 29.1% |
+| Always Neutral | 28.3% |
+| High bucket (n=94) / Medium (n=545) / Low (n=817) | 39.4% / 41.7% / 36.6% |
 
-The lead over the trend baseline is 11 calls (295 vs 284), well within noise. The score **does not
-rank accuracy** (High < Medium). 548 of 769 calls were Bearish (42.9% right) during weeks when prices
-mostly fell (always-Bullish 28.7%), so the hit rate partly reflects the regime. Neutral calls are the
-weakest (27.0%). Gold has no trades from Friday evening to Sunday evening UTC, so its calls due then
-are graded at Sunday's open. Most samples are 1H (564 of 769); 1D/1W have 47. Keep collecting before
-tuning weights; the Neutral band is the first suspect.
+FinSight ties the trend baseline (563 vs 564 correct); the earlier small lead has gone. The score
+**does not rank accuracy** (High < Medium). 944 of 1,456 calls were Bearish (42.6% right) during weeks
+when prices mostly fell (always-Bullish 29.1%), so the hit rate partly reflects the regime. Bullish
+calls are the weakest (27.1%, n=129), then Neutral (32.9%, n=383). Gold has no trades from Friday
+evening to Sunday evening UTC, so its calls due then are graded at Sunday's open. Most samples are 1H
+(1,088 of 1,456); 1D/1W have 78. Keep collecting before tuning weights; the Neutral band is the first
+suspect. Weights stay untouched until the January results post.
 
-`eval/run_eval.py` checks trajectories on the golden set; the pass baseline is in `eval/baseline.txt`.
+`eval/run_eval.py` checks trajectories on the golden set; the pass baseline is in `eval/baseline.txt`
+(90%). Last full run 2026-11-22 on the Oracle server: 12/12 passed.
+
+## Monitoring
+`.github/workflows/uptime.yml` runs on GitHub every 30 minutes: it reads `/api/health` on the live
+server and fails (GitHub emails the owner) if the site doesn't answer, the database can't be read, or
+`last_prediction_minutes_ago` exceeds 120, which means the collector stopped. GitHub pauses scheduled
+workflows after 60 days without commits. ERROR logs also go to Discord (`alerts.py`), but only while
+the backend is running. Structured-output calls (guardrail, news scoring) retry once when Groq rejects
+a misnamed tool call (`tool_use_failed`).
 
 ## Tests
 ```bash

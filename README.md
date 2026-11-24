@@ -17,12 +17,13 @@ You can watch it work step by step, and ask follow-up questions like "why?".
 
 FinSight grades its own past calls against what the price actually did, and we publish the result even when it isn't flattering.
 
-As of 16 November 2026, across 769 graded calls, **it was right 38% of the time, only slightly ahead of simple rules** like following the recent trend (37%). Prices mostly fell in those weeks and FinSight mostly said Bearish, so a different market could look very different. Most calls are short-term, and the sample is still small. Please treat FinSight as a way to see the evidence in one place, not as a prediction you can rely on.
+As of 24 November 2026, across 1,456 graded calls, **it was right 39% of the time, exactly as often as simply following the recent trend** (563 correct calls against 564). Prices mostly fell in those weeks and FinSight mostly said Bearish, so a different market could look very different. Most calls are short-term, and the sample is still small. Please treat FinSight as a way to see the evidence in one place, not as a prediction you can rely on.
 
 ## How it's checked
 
 - **Every call is graded automatically.** The server saves each call, checks the price once the hour, day or week is over, and compares FinSight with simple rules such as "follow the trend" and "always say Bullish".
 - **Test questions, including tricky ones.** A fixed set of questions is run against the real agent. Some are designed to trip it up: asking where to buy, stating something false, going off-topic or trying to override its instructions. A second AI model then checks that each written explanation matches the evidence.
+- **It's watched around the clock.** Every 30 minutes a check from outside the server makes sure the site is answering and still saving new calls, and sends an email if not.
 - **The score comes from code, not the AI.** The AI chooses what to look up and writes the explanation, but the Bullish, Bearish or Neutral call and the score are calculated by fixed rules. The same evidence always gives the same answer.
 
 ## Try it yourself
