@@ -12,7 +12,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 DAYS = 7
-GAP = timedelta(hours=2)        # GitHub sometimes skips scheduled runs; break the line, don't count it as down
+GAP = timedelta(hours=3)        # GitHub sometimes skips scheduled runs; break the line, don't count it as down
 W, H = 820, 250
 LEFT, RIGHT, TOP, BOTTOM = 56, 20, 64, 34
 
@@ -63,10 +63,10 @@ def draw(rows, now: datetime) -> str:
            'role="img" aria-labelledby="t">',
            """<style>
   .ink{fill:#1f1d1a} .muted{fill:#6b665d} .grid{stroke:#e6e2da}
-  .line{stroke:#a07c00} .fail{fill:#c4392f}
+  .line{stroke:#a07c00} .dot{fill:#a07c00} .fail{fill:#c4392f}
   @media (prefers-color-scheme: dark){
     .ink{fill:#efece4} .muted{fill:#9d988e} .grid{stroke:#262a31}
-    .line{stroke:#ebc934} .fail{fill:#f0857a}
+    .line{stroke:#ebc934} .dot{fill:#ebc934} .fail{fill:#f0857a}
   }
   text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 </style>""",
@@ -83,7 +83,7 @@ def draw(rows, now: datetime) -> str:
     out.append(f'<text class="ink" x="{LEFT}" y="30" font-size="17" font-weight="600">FinSight uptime</text>')
     out.append(f'<text class="muted" x="{LEFT}" y="50" font-size="12.5">last {DAYS} days · {title}</text>')
     out.append(f'<text class="muted" x="{W - RIGHT}" y="30" font-size="11" text-anchor="end">'
-               f'updated {now:%d %b %H:%M} UTC · checked every 30 min from GitHub</text>')
+               f'updated {now:%d %b %H:%M} UTC · checked from outside, via GitHub</text>')
 
     for i in range(5):  # horizontal grid with ms labels
         ms = top * i / 4
@@ -106,6 +106,11 @@ def draw(rows, now: datetime) -> str:
         pts = " ".join(f"{px:.1f},{py:.1f}" for px, py in seg)
         out.append(f'<polyline class="line" points="{pts}" fill="none" stroke-width="1.6" '
                    'stroke-linejoin="round" stroke-linecap="round"/>')
+
+    for t, ms, ok in rows:  # every answered check is a dot, so isolated checks still show
+        if ok and ms is not None:
+            out.append(f'<circle class="dot" cx="{x(t):.1f}" cy="{y(ms):.1f}" r="2.6"><title>'
+                       f'{ms:.0f} ms at {t:%d %b %H:%M} UTC</title></circle>')
 
     for t, _, ok in rows:  # failed checks: red dots on the baseline
         if not ok:
