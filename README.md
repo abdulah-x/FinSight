@@ -1,5 +1,7 @@
 # FinSight
 
+[![Tests](https://github.com/abdulah-x/FinSight/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/abdulah-x/FinSight/actions/workflows/ci.yml)
+
 Ask which way Bitcoin, Ethereum or Gold is leaning, and get a clear answer with the evidence behind it.
 
 Type something like "Gold 1D" or "what's the bias on Bitcoin this week?". FinSight goes and checks live prices, the US dollar and interest rates, upcoming economic news, crypto market mood and recent headlines. It then tells you whether the evidence leans **Bullish, Bearish or Neutral**, how strongly it agrees, and what would prove that view wrong.

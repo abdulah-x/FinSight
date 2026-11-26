@@ -138,7 +138,10 @@ cd FinSight-Backend
 pytest            # offline: pure logic only, no mocks of external services
 pytest -m live    # real APIs and a separate finsight_test database
 ```
-Live tests are paced 65 s apart (`groq_budget`). Outages are simulated with real clients holding
+CI (`.github/workflows/ci.yml`) runs the offline suite on every push to `main`/`agent-rebuild` and on
+pull requests, with placeholder `GROQ_API_KEY`/`TAVILY_API_KEY` (clients are built at import) and no
+secrets. There is no CD: deploys stay manual (`git pull` + `docker compose up -d --build
+finsight-backend` on the server). Live tests are paced 65 s apart (`groq_budget`). Outages are simulated with real clients holding
 revoked keys. One full live run uses about 60-70K of Groq's 200K daily tokens for gpt-oss-120b.
 
 ## Security model

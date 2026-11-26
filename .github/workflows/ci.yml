@@ -1,0 +1,43 @@
+# Runs the offline test suite on every push and pull request. No secrets: offline tests make no
+# outside calls. Live tests (real APIs, Groq tokens) stay manual: `pytest -m live`.
+name: CI
+
+on:
+  push:
+    branches: [main, agent-rebuild]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: FinSight-Backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"        # same as the Docker image
+          cache: pip
+          cache-dependency-path: |
+            FinSight-Backend/requirements.txt
+            FinSight-Backend/requirements-dev.txt
+
+      - name: Install
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Offline tests
+        env:
+          GROQ_API_KEY: ci-placeholder     # clients are built at import; offline tests never call them
+          TAVILY_API_KEY: ci-placeholder
+        run: pytest -q
