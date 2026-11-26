@@ -255,7 +255,7 @@ function biasCard(run, reveal = false) {
           return row;
         }))),
     run.qa.map((x) => h("div", { class: "qa" }, h("div", { class: "q" }, x.q), h("div", { class: "a" }, blocks(x.a)))),
-    h("div", { class: "foot" }, "The evidence score measures how strongly the evidence agrees, scaled by coverage and upcoming events. It is not yet calibrated against outcomes. Not financial advice."));
+    h("div", { class: "foot" }, "The evidence score shows how strongly the evidence agrees; it is not a probability, and in live testing it doesn't yet predict which calls are right. Not financial advice. Do your own research."));
 }
 
 function notice(title, text, kind = "") {
