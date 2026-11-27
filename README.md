@@ -10,6 +10,8 @@ You can watch it work step by step, and ask follow-up questions like "why?".
 
 **FinSight gives a market view, not trade signals.** It will never tell you where to buy, sell or place a stop. Nothing here is financial advice.
 
+**Try it live: [139.185.33.97](http://139.185.33.97)**, running around the clock on a free server.
+
 ## What it covers
 
 - **Markets:** Bitcoin, Ethereum and Gold
@@ -21,7 +23,7 @@ FinSight grades its own past calls against what the price actually did, and we p
 
 **See the live results: [139.185.33.97/results](http://139.185.33.97/results).** The page updates itself every 15 minutes and shows how often FinSight was right, next to simple rules such as "follow the recent trend" and "always say Bullish", broken down by market and timeframe.
 
-So far it's right a little under 40% of the time, **about as often as simply following the recent trend**, so it doesn't yet add anything a price chart can't tell you. Prices mostly fell in these weeks and FinSight mostly said Bearish, so a different market could look very different. Please treat FinSight as a way to see the evidence in one place, not as a prediction you can rely on.
+So far it's right a little under 40% of the time, **about as often as simply following the recent trend**, so it doesn't yet add anything a price chart can't tell you. Prices fell more often than they rose in these weeks and FinSight mostly said Bearish, so a different market could look very different. Please treat FinSight as a way to see the evidence in one place, not as a prediction you can rely on.
 
 ## How it's checked
 
@@ -32,7 +34,7 @@ So far it's right a little under 40% of the time, **about as often as simply fol
 
 ![FinSight uptime over the last 7 days: how fast the site answered each check, with failed checks in red](https://raw.githubusercontent.com/abdulah-x/FinSight/uptime-data/uptime.svg)
 
-## Try it yourself
+## Run your own copy
 
 You need [Docker](https://www.docker.com/) and two free keys, from [Groq](https://console.groq.com/) and [Tavily](https://tavily.com/).
 
