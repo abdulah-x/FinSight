@@ -88,6 +88,27 @@ def test_empty_report():
     assert "No graded predictions yet" in calibration_report.report([])
 
 
+def test_public_results_match_the_report_and_flag_small_samples():
+    t0 = datetime(2026, 11, 20, tzinfo=timezone.utc)
+    rows = [{**row("Bearish", "Low", 100, 90, trend="down"), "created_at": t0 + timedelta(hours=i)} for i in range(30)]
+    rows += [{**row("Bullish", "High", 100, 90, asset="GC=F", tf="1D"), "created_at": t0 + timedelta(hours=40 + i)}
+             for i in range(5)]
+    r = calibration_report.public_results(rows, recent=3)
+    assert r["n"] == 35 and r["finsight"] == {"hits": 30, "n": 35, "rate": round(30 / 35, 4), "trusted": True}
+    trend = next(b for b in r["baselines"] if b["name"] == "Follow the recent trend")
+    assert trend["hits"] == 30                          # the 5 'mixed'-trend rows count as Neutral, which is wrong here
+    assert {b["name"]: b["trusted"] for b in r["buckets"]} == {"High": False, "Medium": False, "Low": True}
+    assert [a["name"] for a in r["assets"]] == ["Bitcoin", "Gold"]
+    assert [t["name"] for t in r["timeframes"]] == ["1H", "1D"]
+    assert r["regime"] == {"up": 0, "down": 35, "flat": 0}
+    assert [x["correct"] for x in r["latest"]] == [False, False, False]   # newest first: the wrong Gold calls
+    assert r["latest"][0]["asset"] == "Gold"
+
+
+def test_public_results_empty():
+    assert calibration_report.public_results([]) == {"n": 0, "min_sample": calibration_report.MIN_SAMPLE}
+
+
 # ---------- scheduler ----------
 
 @pytest.mark.parametrize("collector_on, jobs", [

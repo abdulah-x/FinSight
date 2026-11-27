@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en" data-api="/api">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0b0b09">
+  <title>FinSight results</title>
+  <meta name="description" content="How often FinSight's market views have been right, graded automatically against what the price did next and compared with simple rules.">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&family=Tinos:ital,wght@0,400;0,700;1,400&display=swap">
+  <link rel="stylesheet" href="styles.css">
+  <script src="bg.js" defer></script>
+  <script src="results.js" defer></script>
+</head>
+<body>
+  <canvas id="bgArt" aria-hidden="true"></canvas>
+  <div class="ticker">
+    <p class="vh">Market view only, not trade signals or financial advice. Do your own research.</p>
+    <div class="ticker-track" aria-hidden="true"><div class="ticker-group"><span>Market view only</span><span>Not trade signals</span><span>Not financial advice</span><span>Do your own research</span><span>Market view only</span><span>Not trade signals</span><span>Not financial advice</span><span>Do your own research</span><span>Market view only</span><span>Not trade signals</span><span>Not financial advice</span><span>Do your own research</span></div><div class="ticker-group"><span>Market view only</span><span>Not trade signals</span><span>Not financial advice</span><span>Do your own research</span><span>Market view only</span><span>Not trade signals</span><span>Not financial advice</span><span>Do your own research</span><span>Market view only</span><span>Not trade signals</span><span>Not financial advice</span><span>Do your own research</span></div></div>
+  </div>
+  <div class="desk results">
+    <section class="hero rs-hero">
+      <div>
+        <div class="brand">
+          <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
+            <circle cx="14" cy="14" r="8.5" fill="none" stroke="currentColor" stroke-width="2.2"/>
+            <line x1="20.4" y1="20.4" x2="26" y2="26" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+            <line x1="14" y1="8.2" x2="14" y2="19.8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+            <rect x="11.6" y="10.8" width="4.8" height="6.2" rx="1" fill="currentColor"/>
+          </svg>
+          <span class="logo">Fin<span>Sight</span></span><span class="kicker">AI market agent</span>
+          <nav class="nav" aria-label="Pages"><a href="/">Agent</a><a href="/results" aria-current="page">Results</a></nav>
+        </div>
+        <h1>How often FinSight has been right.</h1>
+        <p>Every view FinSight gives is checked against what the price did next, by code, and compared with simple rules anyone could follow. All of them are counted, including the bad stretches.</p>
+      </div>
+      <p class="rs-asof" id="asOf">Loading results…</p>
+    </section>
+
+    <main class="rs-grid" id="results" aria-live="polite"></main>
+  </div>
+</body>
+</html>

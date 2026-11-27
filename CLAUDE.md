@@ -29,9 +29,9 @@ guardrail (gpt-oss-20b, structured output)
 | `FinSight-Backend/resolver.py` | Grades due predictions |
 | `FinSight-Backend/collector.py` | Scheduled forward-test sampling (no agent loop, no writer) |
 | `FinSight-Backend/alerts.py` | Discord webhook handler for ERROR logs |
-| `FinSight-Backend/main.py` | FastAPI app, SSE streaming, scheduler, `/markets` |
+| `FinSight-Backend/main.py` | FastAPI app, SSE streaming, scheduler, `/markets`, `/results` |
 | `FinSight-Backend/eval/` | `golden.json`, `run_eval.py`, `calibration_report.py` |
-| `FinSight-Frontend/` | Vanilla JS page (`index.html`, `app.js`, `styles.css`), nginx |
+| `FinSight-Frontend/` | Vanilla JS: agent page (`index.html`, `app.js`), results page (`results.html`, `results.js`), shared `bg.js` and `styles.css`; nginx |
 
 ### Agent loop
 `gather_evidence` is a single tool that fetches its sources in parallel, because gpt-oss on Groq
@@ -79,6 +79,7 @@ StockTwits refuses cloud servers, so gold has no sentiment source). Binance reje
 | `POST /analyze`, `POST /analyze/stream` | Run an analysis (JSON or SSE) |
 | `POST /resume`, `POST /resume/stream` | Answer an `ask_user` pause; 409 if nothing is pending |
 | `GET /markets` | Quotes and next event; no LLM, cached 60 s, 30/min |
+| `GET /results` | Graded record vs baselines for the results page (`calibration_report.public_results`); no LLM, cached 15 min, 30/min, 503 without storage |
 | `GET /health` | Status, which storage is active, minutes since the last prediction |
 
 SSE events: `checked`, `planned`, `asking`, `gathered`, `agent_done`, then `result` or `error`. The

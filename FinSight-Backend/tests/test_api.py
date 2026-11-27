@@ -59,6 +59,11 @@ def test_health_reports_storage_off_without_a_database():
                                             "last_prediction_minutes_ago": None}
 
 
+def test_results_need_predictions_storage():
+    res = client.get("/results")
+    assert res.status_code == 503 and "not available" in res.json()["detail"]
+
+
 def test_cors_allows_only_the_frontend_origin():
     def preflight(origin):
         return client.options("/analyze", headers={"Origin": origin, "Access-Control-Request-Method": "POST"})

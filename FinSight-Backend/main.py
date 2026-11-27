@@ -6,16 +6,20 @@
          one event per agent step (for the page's live run log), then the result
     GET  /markets  -> latest price, 24h change and sparkline per asset, plus the next
                       high-impact event (no LLM; cached 60s)
+    GET  /results  -> graded track record vs simple baselines, for the results page
+                      (no LLM; cached 15 min)
     GET  /health
 """
 
 import json
 import logging
 import os
+import sys
 import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Literal
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -32,8 +36,12 @@ import yfinance as yf
 
 import alerts
 import db
+from prompts import ASSET_NAMES
 from graph import CONVERSATION_STORAGE, MAX_QUERY_CHARS, agent_graph
 from tools import get_economic_calendar
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "eval"))
+import calibration_report  # noqa: E402  same maths as the offline report, so the page and the report can't disagree
 
 # Our own loggers (finsight, finsight.resolver, finsight.collector) print INFO lines,
 # e.g. "resolved 4 predictions"; uvicorn only configures its own loggers.
@@ -371,6 +379,35 @@ def markets(request: Request, response: Response):
         if _markets["data"] is None or time.time() - _markets["at"] > MARKETS_TTL_SECONDS:
             _markets.update(at=time.time(), data=Markets(assets=[_quote(s) for s in MARKET_SYMBOLS], next_event=_next_event()))
         return _markets["data"]
+
+
+# ---------- results page: graded track record (no LLM, no tokens) ----------
+
+RESULTS_TTL_SECONDS = 15 * 60  # the resolver grades every 15 min, so nothing changes faster
+_results = {"at": 0.0, "data": None}
+_results_lock = threading.Lock()
+
+
+def _load_results() -> dict:
+    rows = [r for r in db.resolved_predictions() if r["asset"] in ASSET_NAMES]  # dropped assets stay stored, uncounted
+    return {**calibration_report.public_results(rows), "generated": datetime.now(timezone.utc).isoformat()}
+
+
+@app.get("/results")
+@limiter.limit("30/minute")
+def results(request: Request, response: Response):
+    if not db.enabled():
+        raise HTTPException(status_code=503, detail="Results are not available on this server.")
+    with _results_lock:
+        if _results["data"] is None or time.time() - _results["at"] > RESULTS_TTL_SECONDS:
+            try:
+                _results.update(at=time.time(), data=_load_results())
+            except Exception:
+                log.exception("could not load results")
+                if _results["data"] is None:
+                    raise HTTPException(status_code=503, detail="Results are unavailable right now.")
+                _results["at"] = time.time() - RESULTS_TTL_SECONDS + 60  # serve the old copy, retry in a minute
+        return _results["data"]
 
 
 @app.get("/health")

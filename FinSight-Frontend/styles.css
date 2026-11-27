@@ -229,3 +229,78 @@ button { -webkit-tap-highlight-color: transparent }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important }
 }
+
+/* page links: beside the brand on every page */
+.nav { margin-left: 10px; padding-left: 14px; border-left: 1px solid var(--line); display: flex; gap: 4px }
+.nav a { font: 500 11px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); text-decoration: none;
+  padding: 8px 11px; border: 1px solid transparent; border-radius: 999px; transition: color .15s, border-color .15s, background-color .15s }
+.nav a:hover { color: var(--ink); border-color: var(--line) }
+.nav a[aria-current="page"] { color: var(--accent); border-color: color-mix(in oklch, var(--accent) 45%, var(--line)); background: var(--accent-soft) }
+
+/* results page: one grid of panels; every bar list shares a zero-based scale */
+.desk.results { grid-template-rows: auto 1fr; grid-template-columns: minmax(0, 1fr) }
+.rs-hero { align-items: end }
+.rs-asof { margin: 0; text-align: right; color: var(--muted); font: 13px/1.7 var(--mono) }
+.rs-asof b { color: var(--accent); font: 500 28px/1 var(--mono); margin-right: 2px }
+.rs-asof small { font-size: 11.5px }
+.rs-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 20px; align-content: start }
+.panel { grid-column: span 4; background: color-mix(in oklch, var(--surface) 88%, transparent); border: 1px solid var(--line); border-radius: 14px;
+  padding: 20px 22px; display: grid; gap: 14px; align-content: start; backdrop-filter: blur(8px); animation: rise .5s var(--ease) both }
+.rs-board { grid-column: span 7 } .rs-buckets { grid-column: span 5 }
+.rs-regime, .rs-split { grid-column: span 3 }
+.rs-latest { grid-column: span 7 } .rs-method { grid-column: span 5 }
+.panel.notice { grid-column: 1 / -1 }
+.rs-intro { margin: -6px 0 0; color: var(--muted); font-size: 15px; max-width: 60ch }
+.rs-verdict { margin: 0; padding-top: 12px; border-top: 1px solid var(--line); font-size: 16px; max-width: 62ch }
+
+.rs-bars { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px }
+.rs-bar { display: grid; grid-template-columns: 11rem minmax(0, 1fr) 7.5rem; gap: 14px; align-items: center }
+.rs-name { font-size: 16px }
+.rs-track { height: 10px; background: var(--bg); border-radius: 5px; box-shadow: inset 0 0 0 1px var(--line); overflow: hidden }
+.rs-fill { display: block; height: 100%; border-radius: 5px; background: color-mix(in oklch, var(--muted) 55%, var(--surface-2));
+  transform-origin: left center; animation: grow .8s var(--ease) .15s both }
+.rs-bar.lead .rs-name { color: var(--accent); font-weight: 700 }
+.rs-bar.lead .rs-fill { background: var(--accent) }
+.rs-bar.lead .rs-val { color: var(--accent) }
+.rs-val { display: grid; gap: 2px; text-align: right; font: 500 15px var(--mono); font-variant-numeric: tabular-nums }
+.rs-val small { font: 400 11px var(--mono); color: var(--muted) }
+.few .rs-val, .few .rs-name { color: var(--muted) } .rs-bar.few .rs-fill { opacity: .35 }
+.few .rs-val { font-style: italic; font-weight: 400; font-size: 13px }
+
+.rs-rows { list-style: none; margin: 0; padding: 0; display: grid }
+.rs-rows li { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 9px 0; border-top: 1px solid var(--line) }
+.rs-rows li:first-child { border-top: 0; padding-top: 0 }
+
+.rs-stack { display: flex; height: 14px; border-radius: 7px; overflow: hidden; gap: 2px }
+.rs-seg.up { background: var(--bull) } .rs-seg.down { background: var(--bear) } .rs-seg.flat { background: color-mix(in oklch, var(--flat) 45%, var(--surface-2)) }
+.rs-legend { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font: 500 12.5px var(--mono) }
+.rs-legend li::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 8px; background: currentColor }
+.rs-legend .flat { color: var(--muted) }
+
+.rs-calls { list-style: none; margin: 0; padding: 0; display: grid }
+.rs-calls li { display: grid; grid-template-columns: 10.5rem minmax(0, 1fr) 9rem 4.5rem; gap: 12px; align-items: center; padding: 8px 0;
+  border-top: 1px solid var(--line); font-size: 15.5px }
+.rs-calls li:first-child { border-top: 0; padding-top: 0 }
+.rs-when { font: 12.5px var(--mono); color: var(--muted); font-variant-numeric: tabular-nums }
+.rs-bias.Bullish { color: var(--bull) } .rs-bias.Bearish { color: var(--bear) } .rs-bias.Neutral { color: var(--flat) }
+.rs-bias small { font: 400 11px var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: .05em }
+.rs-mark { justify-self: end; font: 500 11px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; padding: 5px 8px; border-radius: 999px; border: 1px solid }
+.rs-mark.right { color: var(--bull); border-color: color-mix(in oklch, var(--bull) 45%, transparent) }
+.rs-mark.wrong { color: var(--muted); border-color: var(--line) }
+
+.rs-notes { margin: 0; padding-left: 1.1em; display: grid; gap: 8px; color: var(--muted); font-size: 15px }
+.rs-notes li::marker { color: var(--accent) }
+
+@media (max-width: 1280px) { .rs-regime, .rs-split { grid-column: span 6 } }
+@media (max-width: 1000px) { .panel, .rs-board, .rs-buckets, .rs-latest, .rs-method { grid-column: 1 / -1 } .rs-regime, .rs-split { grid-column: span 6 } }
+@media (max-width: 640px) {
+  .rs-grid { grid-template-columns: minmax(0, 1fr); gap: 16px }
+  .panel, .rs-regime, .rs-split { grid-column: 1 / -1 }
+  .panel { padding: 18px 16px }
+  .rs-asof { text-align: left }
+  .rs-bar { grid-template-columns: minmax(0, 1fr) auto } .rs-track { grid-column: 1 / -1; grid-row: 2 }
+  .rs-calls li { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "when mark" "what bias"; gap: 4px 12px }
+  .rs-calls .rs-when { grid-area: when } .rs-calls .rs-mark { grid-area: mark } .rs-calls .rs-bias { grid-area: bias; justify-self: end }
+  .rs-calls li > span:nth-child(2) { grid-area: what }
+  .nav { margin-left: 0; padding-left: 0; border-left: 0; flex-basis: 100% } .brand { flex-wrap: wrap }
+}

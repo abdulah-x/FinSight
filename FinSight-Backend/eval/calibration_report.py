@@ -72,6 +72,46 @@ def summarize(rows: list[dict]) -> dict:
     }
 
 
+TIMEFRAMES = ("1H", "4H", "1D", "1W")
+BASELINE_LABELS = {"follow the EMA trend": "Follow the recent trend", "coin flip (bull/bear)": "Coin flip",
+                   "always Bullish": "Always say Bullish", "always Neutral": "Always say Neutral"}
+
+
+def public_results(rows: list[dict], recent: int = 12) -> dict:
+    """The same numbers as report(), shaped for the site's results page (GET /results).
+    Every group carries its sample size and a `trusted` flag (n >= MIN_SAMPLE), so the
+    page can say "too few yet" instead of showing a percentage that is mostly noise."""
+    def group(hits, n):
+        return {"hits": hits, "n": n, "rate": round(hits / n, 4) if n else None, "trusted": n >= MIN_SAMPLE}
+
+    if not rows:
+        return {"n": 0, "min_sample": MIN_SAMPLE}
+    s = summarize(rows)
+    by_asset, by_tf = defaultdict(lambda: [0, 0]), defaultdict(lambda: [0, 0])
+    for (asset, tf), (h, n) in s["markets"].items():
+        by_asset[asset][0] += h; by_asset[asset][1] += n
+        by_tf[tf][0] += h; by_tf[tf][1] += n
+    moves = [r["exit_price"] - r["entry_price"] for r in rows]
+    up = sum(m > THRESHOLD_ATR * r["atr"] for m, r in zip(moves, rows))
+    down = sum(m < -THRESHOLD_ATR * r["atr"] for m, r in zip(moves, rows))
+    latest = sorted(rows, key=lambda r: r["created_at"], reverse=True)[:recent]
+    return {
+        "n": s["n"], "min_sample": MIN_SAMPLE, "threshold_atr": THRESHOLD_ATR,
+        "first": min(r["created_at"] for r in rows).isoformat(),
+        "last": max(r["created_at"] for r in rows).isoformat(),
+        "finsight": group(s["hits"], s["n"]),
+        "baselines": [{"name": BASELINE_LABELS[k], **group(round(h), s["n"])} for k, h in s["baselines"].items()],
+        "buckets": [{"name": b, **group(*s["buckets"][b])} for b in ("High", "Medium", "Low")],
+        "score_is_meaningful": s["score_is_meaningful"],
+        "bias": [{"name": b, **group(*s["bias"][b])} for b in ("Bullish", "Bearish", "Neutral") if b in s["bias"]],
+        "assets": [{"name": ASSET_NAMES[a], **group(*by_asset[a])} for a in ASSET_NAMES if a in by_asset],
+        "timeframes": [{"name": tf, **group(*by_tf[tf])} for tf in TIMEFRAMES if tf in by_tf],
+        "regime": {"up": up, "down": down, "flat": len(rows) - up - down},
+        "latest": [{"at": r["created_at"].isoformat(), "asset": ASSET_NAMES[r["asset"]], "timeframe": r["timeframe"],
+                    "bias": r["bias"], "bucket": r["bucket"], "correct": bool(r["correct"])} for r in latest],
+    }
+
+
 def report(rows: list[dict]) -> str:
     if not rows:
         return "No graded predictions yet. Run the collector and wait for the resolver."
