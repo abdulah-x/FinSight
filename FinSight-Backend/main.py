@@ -95,7 +95,11 @@ async def lifespan(app: FastAPI):
         scheduler.shutdown(wait=False)
 
 
-app = FastAPI(title="FinSight API", lifespan=lifespan)
+# The interactive docs (/docs, /redoc, /openapi.json) are off unless asked for: on the public
+# server they would hand out a map of the API and a console to send requests from.
+_DOCS = os.environ.get("API_DOCS", "").lower() == "true"
+app = FastAPI(title="FinSight API", lifespan=lifespan, docs_url="/docs" if _DOCS else None,
+              redoc_url="/redoc" if _DOCS else None, openapi_url="/openapi.json" if _DOCS else None)
 
 # Per-IP rate limit on the endpoints that spend LLM tokens (denial-of-wallet protection).
 # 429 + Retry-After when exceeded. In-memory: per server process, resets on restart.

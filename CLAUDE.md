@@ -149,7 +149,7 @@ revoked keys. One full live run uses about 60-70K of Groq's 200K daily tokens fo
 Read-only tools with fixed endpoints and allowlisted symbols, so a successful injection can only
 distort an analysis, and the score is computed in code. Third-party text is wrapped in
 `<untrusted_data>`. Model and source text reaches the DOM only through `textContent`. nginx sets a CSP
-with no `unsafe-inline`. Postgres and the backend port bind to localhost. No user auth, by decision:
+with no `unsafe-inline`. Postgres and the backend port bind to localhost. FastAPI's `/docs`, `/redoc` and `/openapi.json` are off unless `API_DOCS=true`; nginx returns a real 404 for unknown paths. No user auth, by decision:
 the `session_id` UUID is the only conversation key.
 
 ## Limits
